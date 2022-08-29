@@ -91,23 +91,23 @@ class eTemplate {
         // insert nested HTML modules
         let moduleIncludedHTML = this.insertModules(fileIncludedHTML);
         // categorize codes
-        codeList = this.seperateCode(moduleIncludedHTML, "second");
+        let { types, codes } = this.seperateCode(moduleIncludedHTML, "second");
         // make code blocks like for, if, switch...
-        let sync = this.makeSyncBlock(codeList.type, codeList.code);
+        let sync = this.makeSyncBlock(types, codes);
         // add "HTML" if first code="JS"
-        if (codeList.type[0] == "JS") {
-            codeList.type.unshift("HTML");
-            codeList.code.unshift(" ");
+        if (types[0] == "JS") {
+            types.unshift("HTML");
+            codes.unshift(" ");
             sync = sync.map((x) => x + 1);
             sync.unshift(0);
         }
         // insert class or span tag for refreshing templates
-        codeList = this.insertSync(codeList.type, codeList.code, sync);
+        codeList = this.insertSync(types, codes, sync);
 
         this.htmlSync = sync;
         this.syncCnt = codeList.syncCnt;
         // interprete template scripts
-        let htmlBlock = this.interpret(codeList.type, codeList.code);
+        let htmlBlock = this.interpret(types, codes);
         return new Promise((resolve, reject) => {
             resolve({ htmlBlock, codeList });
         });
@@ -463,19 +463,19 @@ class eTemplate {
     findInclude(currentHTML) {
         let includeArray = []; // only JS script in body
         let urls = []; // url for inclusion
-        let order = []; // index of include script out of code array
+        let orders = []; // index of include script out of code array
         let tempString = "";
         let cnt = 0;
         let currentBodyHTML = "";
         let startPos = currentHTML.indexOf("<body>");
         let endPos = currentHTML.indexOf("</body>");
         currentBodyHTML = startPos == -1 || endPos == -1 ? currentHTML : currentHTML.substring(startPos + 6, endPos);
-        let bodyCode = this.seperateCode(currentBodyHTML, "first");
-        let typeLen = bodyCode.type.length;
+        let { codes, types } = this.seperateCode(currentBodyHTML, "first")
+        let typeLen =types.length;
         for (let i = 0; i < typeLen; i++) {
-            if (bodyCode.type[i] == "JS" && bodyCode.code[i].search(/include\(.*\)/g) != -1) {
-                includeArray.push(bodyCode.code[i]);
-                order[cnt] = i;
+            if (types[i] == "JS" && codes[i].search(/include\(.*\)/g) != -1) {
+                includeArray.push(codes[i]);
+                orders[cnt] = i;
                 cnt++;
             }
         }
@@ -500,9 +500,9 @@ class eTemplate {
             });
         }
         return {
-            urls: urls,
-            order: order,
-            codeList: bodyCode.code,
+            urls,
+            orders,
+            codeList: codes,
         };
     }
 
@@ -513,7 +513,7 @@ class eTemplate {
      */
     async insertNestedHTML(currentHTML) {
         let fileIncludedHTML = "";
-        let { urls, order, codeList } = this.findInclude(currentHTML);
+        let { urls, orders, codeList } = this.findInclude(currentHTML);
         if (urls.length == 0) {
             fileIncludedHTML = codeList.join("");
             return { fileIncludedHTML, codeList };
@@ -521,11 +521,11 @@ class eTemplate {
         let insertedHTMLs = await this.getTextFromFiles(urls);
         // insert HTML of files into the places of each include() scripts.
         insertedHTMLs.forEach((insertedHTML, i) => {
-            codeList[order[i]] = insertedHTML;
+            codeList[orders[i]] = insertedHTML;
         });
         // new HTML with included HTML
         fileIncludedHTML = codeList.join("");
-        ({ urls, order, codeList } = this.findInclude(fileIncludedHTML));
+        ({ urls, orders, codeList } = this.findInclude(fileIncludedHTML));
         if (urls.length == 0) return { fileIncludedHTML, codeList };
         ({ fileIncludedHTML, codeList } = await this.insertNestedHTML(fileIncludedHTML));
         return { fileIncludedHTML, codeList };
@@ -537,23 +537,23 @@ class eTemplate {
      * @returns {string} HTML text inserted with modules
      */
     insertModules(currentHTML) {
-        let bodyCode = this.seperateCode(currentHTML, "first");
+        let {types, codes} = this.seperateCode(currentHTML, "first");
         let cnt = 0;
-        let typeLen = bodyCode.type.length;
+        let typeLen = types.length;
         for (let i = 0; i < typeLen; i++) {
             // check whether a code has a module
-            if (bodyCode.type[i] == "JS" && bodyCode.code[i].includes("<%#")) {
-                let tempString = bodyCode.code[i].match(/(?<=<%#).*(?=%>)/)[0];
+            if (types[i] == "JS" && codes[i].includes("<%#")) {
+                let tempString = codes[i].match(/(?<=<%#).*(?=%>)/)[0];
                 try {
-                    bodyCode.code[i] = this.basicCode(tempString);
+                    codes[i] = this.basicCode(tempString);
                     cnt++;
                 } catch {
-                    bodyCode.code[i] = `<%= "invalid module" %>`;
+                    codes[i] = `<%= "invalid module" %>`;
                     cnt++
                 }
             }
         }
-        let result = bodyCode.code.join("");
+        let result = codes.join("");
         if (cnt !== 0)
             // recursive call for multi-layer modules
             result = this.insertModules(result);
@@ -580,7 +580,7 @@ class eTemplate {
             let codeType = "";
             if (firstIndex == 0 && lastIndex == code.length - 2 && !code.includes("closeDelimiter:")) {
                 codeType = "JS";
-                codes[i] = calltype == "second" ? code.substring(2, code.length - 2).trim() : code.trim();
+                codes[i] = calltype == "second" ? code.substring(2, code.length - 2).trim() : code;
             } else {
                 codeType = "HTML";
             }
@@ -597,7 +597,7 @@ class eTemplate {
                 }
             }
         }
-        return { type: types, code: codes };
+        return { types, codes };
     }
 
     /**
@@ -894,6 +894,7 @@ class eTemplate {
         let lastSync = -1;
         let startPos = 0;
         let endPos = 0;
+        let spacePos = 0;
         let tempStr = "";
         let tagStr = "";
         let prevCode = "";
@@ -942,15 +943,12 @@ class eTemplate {
                                 break;
                             }
                         }
-
                         for (let j = i + 1; j <= endBlock; j++) {
                             if (type[j] === "HTML" && code[j].includes('="') && type[j + 1] == "JS") {
                                 attrList.push(code[j].substring(code[j].lastIndexOf(" ") + 1, code[j].lastIndexOf("=")));
                             }
                         }
-
                         let attrText = attrList.join("+");
-
                         if (tempStr.includes("class=")) {
                             // class in the previous code
                             classStart = prevCode.indexOf("class=", startPos) + 7;
@@ -992,19 +990,30 @@ class eTemplate {
                 } else {
                     // previous HTML is ended width tag
                     startPos = prevCode.lastIndexOf("<");
-                    tagStr = prevCode.substring(startPos + 1, prevCode.length).split(" ")[0];
+                    endPos = prevCode.lastIndexOf(">");
+                    spacePos = prevCode.indexOf(" ", startPos);
+                    if (spacePos == -1 || spacePos > endPos) {
+                        tagStr = prevCode.substring(startPos + 1, endPos);
+                    } else {
+                        tagStr = prevCode.substring(startPos + 1, prevCode.length).split(" ")[0];
+                    }
+
                     if (prevCode.substring(startPos, startPos + 2) != "</") {
+
+                        console.log(i, tagStr);
+                        console.log(code[endBlock + 1]);
+
                         //  if previous code is not ended with end tag
-                        if (code[endBlock + 1].includes("</" + tagStr) &&
+                        if (code[endBlock + 1].includes("</" + tagStr) && 
                             code[endBlock + 1].indexOf("</" + tagStr) <
                             (code[endBlock + 1].indexOf("<" + tagStr) == -1
                                 ? code[endBlock + 1].length
                                 : code[endBlock + 1].indexOf("<" + tagStr))) {
-                            if (code[endBlock + 1].trim().indexOf("</" + tagStr) == 0) {
+                            if (this.removeControlText(code[endBlock + 1]).trim().indexOf("</" + tagStr) == 0) {
                                 // end tag is at the first in the next code
-                                endPos = prevCode.length - 1;
+                                endPos = prevCode.length;
                                 startPos = prevCode.lastIndexOf("<");
-                                tempStr = prevCode.substring(startPos, endPos + 1);
+                                tempStr = prevCode.substring(startPos, endPos);
                                 if (tempStr.includes("class=")) {
                                     classStart = prevCode.indexOf("class=", startPos) + 7;
                                     code[i - 1] = `${prevCode.substring(
@@ -1013,11 +1022,13 @@ class eTemplate {
                                     )}${eClass} ${eClass}Cnt${syncCnt} ${prevCode.substring(classStart)}`;
                                     syncCnt++;
                                 } else {
+
+                                    endPos = prevCode.lastIndexOf(">");
                                     code[i - 1] = `${prevCode.substring(
                                         0,
-                                        prevCode.length - 1
+                                        endPos
                                     )} class="${eClass} ${eClass}Cnt${syncCnt}" ${prevCode.substring(
-                                        prevCode.length - 1,
+                                        endPos,
                                         prevCode.length
                                     )}`;
                                     syncCnt++;
@@ -1080,11 +1091,11 @@ class eTemplate {
         // combine css in style tag and linked css
         let combinedStyle = await this.combineCss(newHTML);
         // seperate style text to template and others
-        let tempCode = this.seperateCode(combinedStyle, "second");
-        this.cssCode = tempCode.code;
-        this.cssType = tempCode.type;
+        let { types, codes} = this.seperateCode(combinedStyle, "second");
+        this.cssCode = codes;
+        this.cssType = types;
         // interpret templates
-        let cssBlock = this.interpret(tempCode.type, tempCode.code);
+        let cssBlock = this.interpret(types, codes);
         combinedStyle = cssBlock.join("");
         // parse css string
         let cssRules = this.parseCSS(combinedStyle);
@@ -1160,21 +1171,21 @@ class eTemplate {
     async insertNestedCSS(styleText) {
         let finalCSS = "";
         // get urls of css to import, where to insert, seperated css array
-        let { urls, order, codeList } = this.findImport(styleText);
+        let { urls, orders, codes } = this.findImport(styleText);
         if (urls.length == 0) {
             // if there is no @import at all
-            finalCSS = codeList.join("");
+            finalCSS = codes.join("");
             return finalCSS;
         }
         let insertedCSSs = await this.getTextFromFiles(urls);
         // insert CSS of files into each @import
         insertedCSSs.forEach((insertedCSS, i) => {
-            codeList[order[i]] = insertedCSS;
+            codes[orders[i]] = insertedCSS;
         });
         // new CSS with imported CSS
-        finalCSS = codeList.join("");
+        finalCSS = codes.join("");
         // find further nested @import
-        ({ urls, order, codeList } = this.findImport(finalCSS));
+        ({ urls, orders, codes } = this.findImport(finalCSS));
         if (urls.length != 0) {
             // recursively insert css from imported css files
             finalCSS = await this.insertNestedCSS(finalCSS);
@@ -1189,19 +1200,19 @@ class eTemplate {
         // declare variables
         let importArray = []; // only @import in CSS
         let urls = []; // url for inclusion
-        let order = []; // index of @import out of array
+        let orders = []; // index of @import out of array
         let tempString = "";
         let cnt = 0;
         const importRegex = /@import[\s\S]*?["|'].*?["|'];/g;
         // categorize CSS to @IMPORT and OTHER
-        let styleCode = this.seperateImport(styleText);
+        let { types, codes } = this.seperateImport(styleText);
         // only @import to includeArray
-        for (let i = 0; i < styleCode.type.length; i++) {
-            if (styleCode.type[i] == "IMPORT" &&
-                styleCode.code[i].search(importRegex) != -1 &&
-                !styleCode.code[i].includes("http")) {
-                importArray.push(styleCode.code[i]);
-                order[cnt] = i;
+        for (let i = 0; i < types.length; i++) {
+            if (types[i] == "IMPORT" &&
+                codes[i].search(importRegex) != -1 &&
+                !codes[i].includes("http")) {
+                importArray.push(codes[i]);
+                orders[cnt] = i;
                 cnt++;
             }
         }
@@ -1220,9 +1231,9 @@ class eTemplate {
             });
         }
         return {
-            urls: urls,
-            order: order,
-            codeList: styleCode.code,
+            urls,
+            orders,
+            codes,
         };
     }
 
@@ -1238,7 +1249,7 @@ class eTemplate {
             types.push(type);
             codes[index] = code.includes("@import") ? code.trim() : this.removeControlText(code).trim();
         }
-        return { type: types, code: codes };
+        return { types, codes };
     }
 
     createTextStyle(cssRules) {
@@ -1302,8 +1313,9 @@ class eTemplate {
         let source = "";
         let result = "";
         let path = "";
-        let tempCode = [];
         let sync = [];
+        let types = [];
+        let codes = [];
         let returnValue = "";
         let combinedStyle = "";
         let cssBlock = [];
@@ -1318,22 +1330,22 @@ class eTemplate {
         switch (type) {
             case "html":
                 source = dataText;
-                tempCode = this.seperateCode(source, "second");
-                sync = this.makeSyncBlock(tempCode.type, tempCode.code);
-                if (tempCode.type[0] == "JS") {
-                    tempCode.type.unshift("HTML");
-                    tempCode.code.unshift(" ");
+                ({ types, codes } = this.seperateCode(source, "second"));
+                sync = this.makeSyncBlock(types, codes);
+                if (types[0] == "JS") {
+                    types.unshift("HTML");
+                    codes.unshift(" ");
                     sync = sync.map((x) => x + 1);
                     sync.unshift(0);
                 }
-                tempCode = this.insertSync(tempCode.type, tempCode.code, sync);
-                this.syncCnt = tempCode.syncCnt;
-                result = this.interpret(tempCode.type, tempCode.code);
+                ({ types, codes, syncCnts } = this.insertSync(types, codes, sync));
+                this.syncCnt = syncCnts;
+                result = this.interpret(types, codes);
                 returnValue = result.join("");
                 return {
                     domText: returnValue,
-                    sourceType: tempCode.type,
-                    sourceCode: tempCode.code,
+                    sourceType: types,
+                    sourceCode: codes,
                     sourceSync: sync,
                 };
             case "html_path":
@@ -1344,31 +1356,31 @@ class eTemplate {
                 } catch (e) {
                     return "incorrect pathname";
                 }
-                tempCode = this.seperateCode(source, "second");
-                sync = this.makeSyncBlock(tempCode.type, tempCode.code);
-                if (tempCode.type[0] == "JS") {
-                    tempCode.type.unshift("HTML");
-                    tempCode.code.unshift(" ");
+                ({ types, codes } = this.seperateCode(source, "second"));
+                sync = this.makeSyncBlock(types, codes);
+                if (types[0] == "JS") {
+                    types.unshift("HTML");
+                    codes.unshift(" ");
                     sync = sync.map((x) => x + 1);
                     sync.unshift(0);
                 }
-                tempCode = this.insertSync(tempCode.type, tempCode.code, sync);
-                this.syncCnt = tempCode.syncCnt;
-                result = this.interpret(tempCode.type, tempCode.code);
+                ({ types, codes, syncCnts } = this.insertSync(types, codes, sync));
+                this.syncCnt = syncCnts;
+                result = this.interpret(types, codes);
                 returnValue = result.join("");
                 return {
                     domText: returnValue,
-                    sourceType: tempCode.type,
-                    sourceCode: tempCode.code,
+                    sourceType: types,
+                    sourceCode: codes,
                     sourceSync: sync,
                 };
             case "css":
                 source = dataText;
                 source = await this.insertNestedCSS(source);
                 // seperate style text to template and others
-                tempCode = this.seperateCode(source, "second");
+                ({ types, codes } = this.seperateCode(source, "second"));
                 // interpret templates
-                cssBlock = this.interpret(tempCode.type, tempCode.code);
+                cssBlock = this.interpret(types, codes);
                 combinedStyle = cssBlock.join("");
                 // parse css string
                 cssRules = this.parseCSS(combinedStyle);
@@ -1388,9 +1400,9 @@ class eTemplate {
                     return "incorrect pathname";
                 }
                 source = await this.insertNestedCSS(source);
-                tempCode = this.seperateCode(source, "second");
+                ({ types, codes } = this.seperateCode(source, "second"));
                 // interpret templates
-                cssBlock = this.interpret(tempCode.type, tempCode.code);
+                cssBlock = this.interpret(types, codes);
                 combinedStyle = cssBlock.join("");
                 // parse css string
                 cssRules = this.parseCSS(combinedStyle);
