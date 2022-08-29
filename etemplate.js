@@ -2,6 +2,8 @@
 /**
  * ! ver 1.8 : change from function to class
  * ! ver 1.81 : bug fix - preserve spaces and algorithm of finding last tag closure
+ * ! ver 1.82 : bug fix - insertSync error
+ * ! ver 1.83 : remove renderpart functions - no use
  * Render and sync state changes of variable to HTML and CSS using template literals 
  * @class
  * @param {string} openDelimiter start tag of template
@@ -55,13 +57,13 @@ class eTemplate {
         this.getTitle(CURRENTHTML);
         this.changeTitle(this.titleCode);
         // read multiple layers and proceed
-        const RESULT = await this.readFurther(CURRENTHTML, iScope);
+        let {htmlBlock, codeList} = await this.readFurther(CURRENTHTML, iScope);
         // variables for sync()
-        this.htmlCode = RESULT.codeList.code;
-        this.htmlType = RESULT.codeList.type;        
+        this.htmlCode = codeList.code;
+        this.htmlType = codeList.type;        
         // remove current content of body and insert new content
         this.removeAllChildNodes(document.querySelector("body"));
-        document.body.insertAdjacentHTML("afterbegin", RESULT.htmlBlock.join(""));
+        document.body.insertAdjacentHTML("afterbegin", htmlBlock.join(""));
         // scroll to element of ID
         if (scrollObj != {} && Object.keys(scrollObj).length != 0) {
             let targetElement = document.getElementById(scrollObj.id);
@@ -999,10 +1001,6 @@ class eTemplate {
                     }
 
                     if (prevCode.substring(startPos, startPos + 2) != "</") {
-
-                        console.log(i, tagStr);
-                        console.log(code[endBlock + 1]);
-
                         //  if previous code is not ended with end tag
                         if (code[endBlock + 1].includes("</" + tagStr) && 
                             code[endBlock + 1].indexOf("</" + tagStr) <
@@ -1308,159 +1306,6 @@ class eTemplate {
         }
     }
 
-    // partial render for data object or files
-    async renderPart(dataText = "", type = "") {
-        let source = "";
-        let result = "";
-        let path = "";
-        let sync = [];
-        let types = [];
-        let codes = [];
-        let returnValue = "";
-        let combinedStyle = "";
-        let cssBlock = [];
-        let cssRules = [];
-        let modifiedCss = "";
-
-        if (type.trim() == "")
-            return "select type from html, html_path";
-        if (dataText.trim() == "")
-            return "nothing to render";
-
-        switch (type) {
-            case "html":
-                source = dataText;
-                ({ types, codes } = this.seperateCode(source, "second"));
-                sync = this.makeSyncBlock(types, codes);
-                if (types[0] == "JS") {
-                    types.unshift("HTML");
-                    codes.unshift(" ");
-                    sync = sync.map((x) => x + 1);
-                    sync.unshift(0);
-                }
-                ({ types, codes, syncCnts } = this.insertSync(types, codes, sync));
-                this.syncCnt = syncCnts;
-                result = this.interpret(types, codes);
-                returnValue = result.join("");
-                return {
-                    domText: returnValue,
-                    sourceType: types,
-                    sourceCode: codes,
-                    sourceSync: sync,
-                };
-            case "html_path":
-                path = this.currentUrl().host + dataText;
-                try {
-                    const response = await fetch(path);
-                    source = await response.text();
-                } catch (e) {
-                    return "incorrect pathname";
-                }
-                ({ types, codes } = this.seperateCode(source, "second"));
-                sync = this.makeSyncBlock(types, codes);
-                if (types[0] == "JS") {
-                    types.unshift("HTML");
-                    codes.unshift(" ");
-                    sync = sync.map((x) => x + 1);
-                    sync.unshift(0);
-                }
-                ({ types, codes, syncCnts } = this.insertSync(types, codes, sync));
-                this.syncCnt = syncCnts;
-                result = this.interpret(types, codes);
-                returnValue = result.join("");
-                return {
-                    domText: returnValue,
-                    sourceType: types,
-                    sourceCode: codes,
-                    sourceSync: sync,
-                };
-            case "css":
-                source = dataText;
-                source = await this.insertNestedCSS(source);
-                // seperate style text to template and others
-                ({ types, codes } = this.seperateCode(source, "second"));
-                // interpret templates
-                cssBlock = this.interpret(types, codes);
-                combinedStyle = cssBlock.join("");
-                // parse css string
-                cssRules = this.parseCSS(combinedStyle);
-                modifiedCss = this.createTextStyle(cssRules);
-                return {
-                    cssText: modifiedCss,
-                    cssRules: cssRules,
-                    cssType: tempCode.type,
-                    cssCode: tempCode.code,
-                };
-            case "css_path":
-                path = this.currentUrl().host + dataText;
-                try {
-                    const response = await fetch(path);
-                    source = await response.text();
-                } catch (e) {
-                    return "incorrect pathname";
-                }
-                source = await this.insertNestedCSS(source);
-                ({ types, codes } = this.seperateCode(source, "second"));
-                // interpret templates
-                cssBlock = this.interpret(types, codes);
-                combinedStyle = cssBlock.join("");
-                // parse css string
-                cssRules = this.parseCSS(combinedStyle);
-                modifiedCss = this.createTextStyle(cssRules);
-                return {
-                    cssText: modifiedCss,
-                    cssRules: cssRules,
-                    cssType: tempCode.type,
-                    cssCode: tempCode.code,
-                };
-        }
-    }
-
-    appendHtml(obj = {}, element) {
-        let domText = obj.domText || "";
-        if (element == undefined)
-            return "no element to append to";
-        const tempType = obj.sourceType || [];
-        const tempCode = obj.sourceCode || [];
-        const tempSync = obj.sourceSync || [];
-        if (this.getObjectType(element) != "DOMobject") {
-            return "invalid object to append to";
-        }
-        if (tempType.length == 0)
-            return "nothing to append";
-        // adding template information for sync
-        this.htmlType = [...this.htmlType, ...tempType];
-        this.htmlCode = [...this.htmlCode, ...tempCode];
-        this.htmlSync = [...this.htmlSync, ...tempSync];
-        // appending interpreted html to element
-        domText = domText.trim();
-        if (domText == "")
-            return "nothing to append";
-        element.insertAdjacentHTML("beforeend", domText);
-    }
-
-    appendCss(cssObject = {}) {
-        let modifiedCss = cssObject.cssText || "";
-        let cssRules = cssObject.cssRules || [];
-        let cssType = cssObject.cssType || [];
-        let cssCode = cssObject.cssCode || [];
-        let styleElement;
-        if (document.querySelector("style") == null) {
-            styleElement = document.createElement("style");
-            styleElement.appendChild(document.createTextNode(modifiedCss));
-            document.head.appendChild(styleElement);
-            this.cssRules = [...this.cssRules, ...cssRules];
-            this.cssType = [...this.cssType, ...cssType];
-            this.cssCode = [...this.cssCode, ...cssCode];
-            return;
-        }
-        styleElement = document.createTextNode(modifiedCss);
-        document.querySelector("style").appendChild(styleElement);
-        this.cssRules = [...this.cssRules, ...cssRules];
-        this.cssType = [...this.cssType, ...cssType];
-        this.cssCode = [...this.cssCode, ...cssCode];
-    }
-
     currentUrl() {
         let fullUrl = window.location.href;
         let urlHash = window.location.hash;
@@ -1490,23 +1335,6 @@ class eTemplate {
         let insertedTexts = await Promise.all(responseTexts);
         errorNo.map((err) => insertedTexts.splice(err, 0, "error: check your path"));
         return insertedTexts;
-    }
-
-    // check object type for renderPart()
-    getObjectType(o) {
-        if (typeof HTMLElement === "object"
-            ? o instanceof HTMLElement
-            : o && typeof o === "object" && o !== null && o.nodeType === 1 && typeof o.nodeName === "string") {
-            return "DOMobject";
-        } else {
-            return o.includes("<%") && o.includes("%>")
-                ? "template"
-                : o.includes(".html")
-                    ? "html_path"
-                    : o.includes(".css")
-                        ? "css_path"
-                        : "undefined";
-        }
     }
 
     removeAllChildNodes(parent) {
