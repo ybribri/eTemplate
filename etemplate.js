@@ -1,9 +1,10 @@
 "use strict";
 /**
- * ! ver 1.8 : change from function to class
+ * ! ver 1.80 : change from function to class
  * ! ver 1.81 : bug fix - preserve spaces and algorithm of finding last tag closure
  * ! ver 1.82 : bug fix - insertSync error
  * ! ver 1.83 : remove renderpart functions - no use
+ * ! ver 1.90 : Use worker
  * Render and sync state changes of variable to HTML and CSS using template literals 
  * @class
  * @param {string} openDelimiter start tag of template
@@ -11,9 +12,10 @@
  * @param {string} syncClass class name to update
  * @param {string} startUrl if syncUrl is not defined for render(), startUrl can be loaded.
  */
+
 class eTemplate {
     constructor({
-        openDelimiter = "<%", closeDelimiter = "%>", syncClass = "et_sync", startUrl = "",
+        openDelimiter = "<%", closeDelimiter = "%>", syncClass = "et_sync", startUrl = "", urlList = []
     } = {}) {
         this.htmlCode = []; // categorized HTML codes
         this.htmlType = []; // categorized types of codes, "JS":template or "HTML"
@@ -29,6 +31,8 @@ class eTemplate {
         this.openDelimiter = openDelimiter; // start tag of template
         this.closeDelimiter = closeDelimiter; // end tag of template
         this.commentDelimiter = openDelimiter + "%"; // start tag of comment template
+        this.preRead = [];
+        this.urlList = urlList;
     }
 
     /**
@@ -48,23 +52,54 @@ class eTemplate {
          * 3. this file's url
          */
         fileName = fileName === "" ? (this.startUrl !== "" ? this.startUrl : this.currentUrl().filename) : fileName;
-        let myUrl = this.currentUrl().host + fileName;
 
-        //  read first layer HTML
-        const RESPONSE = await fetch(myUrl);
-        const CURRENTHTML = await RESPONSE.text();
-        // change title
-        this.getTitle(CURRENTHTML);
-        this.changeTitle(this.titleCode);
-        // read multiple layers and proceed
-        let {htmlBlock, codeList} = await this.readFurther(CURRENTHTML, iScope);
-        // variables for sync()
-        this.htmlCode = codeList.code;
-        this.htmlType = codeList.type;        
+        // added workers
+        let index = this.urlList.indexOf(fileName);
+        let joinedHTML = '';
+
+        if (this.preRead.length == 0) {
+            // if it's the first time to render, preRead() except current one;
+            this.preReadFiles(this.urlList, iScope);
+
+            let myUrl = this.currentUrl().host + fileName;        
+            //  read first layer HTML
+            const RESPONSE = await fetch(myUrl);
+            const CURRENTHTML = await RESPONSE.text();
+            // change title
+            this.getTitle(CURRENTHTML);        
+            this.changeTitle(this.titleCode);
+            // read multiple layers and proceed
+            const RESULT = await this.readFurther(CURRENTHTML, iScope);
+            joinedHTML = RESULT.htmlBlock.join('');
+            // variables for sync()
+            this.htmlCode = RESULT.codeList.code;
+            this.htmlType = RESULT.codeList.type;        
+          
+        } else {
+            let fileIncludedHTML = this.preRead[index].fileIncludedHTML;
+            let cssText = this.preRead[index].cssText;
+            this.templateInClass = [];
+            this.syncCnt = 0;
+            
+            // change title
+            this.changeTitle(this.titleCode);
+            // chanes CSS
+            if (iScope !== "body") this.changeCssFromCombinedStyle(cssText);        
+    
+            // insert nested HTML modules
+            let moduleIncludedHTML = this.insertModules(fileIncludedHTML);
+
+            const RESULT = await this.readFurtherFromCombinedHTML(moduleIncludedHTML);
+            joinedHTML = RESULT.htmlBlock.join('');
+
+            this.htmlCode = RESULT.codeList.code;
+            this.htmlType = RESULT.codeList.type;    
+        }
+
         // remove current content of body and insert new content
         this.removeAllChildNodes(document.querySelector("body"));
-        document.body.insertAdjacentHTML("afterbegin", htmlBlock.join(""));
-        // scroll to element of ID
+        document.body.insertAdjacentHTML("afterbegin", joinedHTML);
+
         if (scrollObj != {} && Object.keys(scrollObj).length != 0) {
             let targetElement = document.getElementById(scrollObj.id);
             let blockArr = ["start", "center", "end"];
@@ -74,8 +109,29 @@ class eTemplate {
                 document.getElementById(scrollObj.id).scrollIntoView({ block: scrollObj.block });
             }
         }
-        // show document
         document.body.style.display = "block";
+        return new Promise((resolve, reject) => {
+            resolve('done');
+        })                
+    }
+
+    /**
+     * Spawn web workers of preloading and combining each pages
+     * @param {array} urlList list of filenames used in this website
+     * @param {string} iScope scope to check templates
+     * @returns nothing
+     */
+    async preReadFiles(urlList, iScope) {
+        let workers = [];
+        for(let i=0; i<urlList.length; i++) {
+            const path = this.currentUrl().host + urlList[i];
+            workers[i] = (new Worker(this.currentUrl().host + 'js/worker.min.js'));
+            workers[i].postMessage({path, iScope});
+            workers[i].onmessage = (e) => {
+                this.preRead[i] = e.data;
+            }
+        }
+        return;
     }
 
     /**
@@ -85,7 +141,7 @@ class eTemplate {
      * @param {string} iScope scope for interpret. "": CSS and HTML, "body": only HTML
      * @returns {object} htmlBlock: interpreted codes array / codeList: object of code and type
      */
-    async readFurther(currentHTML, iScope) {
+     async readFurther(currentHTML, iScope) {
         // CSS change in HEAD
         if (iScope !== "body") await this.changeCss(currentHTML); 
         // insert nested HTML files
@@ -105,7 +161,6 @@ class eTemplate {
         }
         // insert class or span tag for refreshing templates
         codeList = this.insertSync(types, codes, sync);
-
         this.htmlSync = sync;
         this.syncCnt = codeList.syncCnt;
         // interprete template scripts
@@ -115,6 +170,30 @@ class eTemplate {
         });
     }
 
+    async readFurtherFromCombinedHTML(fileIncludedHTML) {
+        // insert nested HTML modules
+        let moduleIncludedHTML = this.insertModules(fileIncludedHTML);
+        // categorize codes
+        let { types, codes } = this.seperateCode(moduleIncludedHTML, "second");
+        // make code blocks like for, if, switch...
+        let sync = this.makeSyncBlock(types, codes);
+        // add "HTML" if first code="JS"
+        if (types[0] == "JS") {
+            types.unshift("HTML");
+            codes.unshift(" ");
+            sync = sync.map((x) => x + 1);
+            sync.unshift(0);
+        }
+        // insert class or span tag for refreshing templates
+        let codeList = this.insertSync(types, codes, sync);
+        this.htmlSync = sync;
+        this.syncCnt = codeList.syncCnt;
+        // interprete template scripts
+        let htmlBlock = this.interpret(types, codes);
+        return { htmlBlock, codeList };
+    }
+
+
     /**
      * updates applied templates both on HTML and CSS if there are variable changes.
      * @param {string} iScope updating scope, whether it updates only HTML or also CSS.    
@@ -123,7 +202,6 @@ class eTemplate {
     sync(iScope) {
         let temp = "";
         let eClass = this.syncClass;
-        let temp_code = "";
         // check and change title
         this.changeTitle(this.titleCode);
 
@@ -140,7 +218,7 @@ class eTemplate {
                 temp += "=" + (cList.value ? `"${this.escapeHtml(cList.value)}";` : '"";');
             }
             try {
-                temp_code = this.controlCode(temp);
+                let temp_code = this.controlCode(temp);
             } catch (error) {
                 return error;
             }
@@ -169,16 +247,25 @@ class eTemplate {
                     index = parseInt(classList.replace(`${eClass}Cnt`, ""), 10);
                 }
             }
+
             if (isTemplateInAttribute) {
                 for (let j = 0; j < attrList.length; j++) {
                     if (attrList[j] == "class") {
                         if (Array.isArray(htmlBlock[index])) {
-                            cList.classList.remove(this.templateInClass[index]);
-                            cList.classList.add(htmlBlock[index][j]);
+                            if (this.templateInClass[index] !=='' ) {
+                                cList.classList.remove(this.templateInClass[index]);
+                            }
+                            if (htmlBlock[index] !== '' ) {
+                                cList.classList.add(htmlBlock[index][j]);
+                            }
                             this.templateInClass[index] = htmlBlock[index][j];
                         } else {
-                            cList.classList.remove(this.templateInClass[index]);
-                            cList.classList.add(htmlBlock[index]);                            
+                            if (this.templateInClass[index] !=='' ) {
+                                cList.classList.remove(this.templateInClass[index]);
+                            }
+                            if (htmlBlock[index] !== '' ) {
+                                cList.classList.add(htmlBlock[index]);
+                            }
                             this.templateInClass[index] = htmlBlock[index];
                         }
                     } else {
@@ -1116,6 +1203,36 @@ class eTemplate {
             }
         });
     }
+
+    changeCssFromCombinedStyle(combinedStyle) {
+        // seperate style text to template and others
+        let { types, codes} = this.seperateCode(combinedStyle, "second");
+        this.cssCode = codes;
+        this.cssType = types;
+        // interpret templates
+        let cssBlock = this.interpret(types, codes);
+        combinedStyle = cssBlock.join("");
+        // parse css string
+        let cssRules = this.parseCSS(combinedStyle);
+        this.cssRules = cssRules;
+        const modifiedCss = this.createTextStyle(cssRules);
+        if (modifiedCss == "")
+            return;
+        // remove all style tags
+        document.querySelectorAll("style").forEach((style) => {
+            style.parentNode.removeChild(style);
+        });
+        // create and append all combined CSS
+        let t_style = document.createElement("style");
+        t_style.appendChild(document.createTextNode(modifiedCss));
+        document.head.appendChild(t_style);
+        // remove CSS link except linked CSS from other server
+        document.head.querySelectorAll("link").forEach((element) => {
+            if (element.getAttribute("rel") == "stylesheet" && !element.getAttribute("href").includes("http")) {
+                element.parentNode.removeChild(element);
+            }
+        });
+    }    
 
     async combineCss(newHTML) {
         // declare variables
