@@ -3,8 +3,9 @@
 * Developed for developers who mainly use HTML and Vanilla Javascript
 * Simple usage both on HTML and CSS
 * As less option settings and no need for complicated useState or useEffect definition
-* Immediate state changes with one function call, affect only HTML and CSS part that templates are used in.
+* Immediate state changes with one function call, affect only HTML and CSS part that templates are used in
 * Template for variables, template for statements, inclusion of HTML file and modules
+* Using web-workers for pre-reading and integrating pages for single page rendering through backgroudn thread
 
 * This is [demo and detailed documentation](https://ybrians.cafe24.com/etemplate/)
 

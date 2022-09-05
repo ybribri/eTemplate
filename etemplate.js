@@ -5,7 +5,8 @@
  * ! ver 1.82 : bug fix - insertSync error
  * ! ver 1.83 : remove renderpart functions - no use
  * ! ver 1.90 : Use worker
- * Render and sync state changes of variable to HTML and CSS using template literals 
+ * ! ver 2.00 : add appendHTML and appendCSS
+  * Render and sync state changes of variable to HTML and CSS using template literals 
  * @class
  * @param {string} openDelimiter start tag of template
  * @param {string} closeDelimiter end tag of template
@@ -33,6 +34,8 @@ class eTemplate {
         this.commentDelimiter = openDelimiter + "%"; // start tag of comment template
         this.preRead = [];
         this.urlList = urlList;
+        this.fileName = "";
+        this.scripts = [];
     }
 
     /**
@@ -43,24 +46,29 @@ class eTemplate {
      * @param {string} scrollObj.block position of elements with ID to scroll
      * @param {string} iScope scope for interpret. "": CSS and HTML, "body": only HTML
      */
-    async render({ syncUrl: fileName = "", scrollTo: scrollObj = {}, iScope = "" } = {}) {
+
+    async render({ syncUrl: fileName = "", scrollTo: scrollObj = {}, iScope = "" } = {}, callback = function() {} ) {
         this.syncCnt = 0;
-        /**
-         * Priority of fileName
+        // if there is no object and only function
+        if (typeof arguments[0] === 'function') callback = arguments[0];
+         /**
+         * ! Priority of fileName
          * 1. url in fileName
          * 2. url in startUrl
          * 3. this file's url
          */
         fileName = fileName === "" ? (this.startUrl !== "" ? this.startUrl : this.currentUrl().filename) : fileName;
-
+        // adjust relative pathname to match host url
+        fileName = this.verifyFilename(fileName);
+        this.urlList = this.urlList.map(url => this.verifyFilename(url));
         // added workers
-        let index = this.urlList.indexOf(fileName);
+        let index = this.urlList.indexOf(fileName) || 0;
         let joinedHTML = '';
+        this.fileName = fileName;
 
-        if (this.preRead.length == 0) {
-            // if it's the first time to render, preRead() except current one;
-            this.preReadFiles(this.urlList, iScope);
-
+        if (this.preRead.length == 0) {     
+            // if it's the first time to render, preRead() unless ther is no urlList
+            if (this.urlList.length > 0) this.preReadFiles(this.urlList, iScope);
             let myUrl = this.currentUrl().host + fileName;        
             //  read first layer HTML
             const RESPONSE = await fetch(myUrl);
@@ -70,28 +78,25 @@ class eTemplate {
             this.changeTitle(this.titleCode);
             // read multiple layers and proceed
             const RESULT = await this.readFurther(CURRENTHTML, iScope);
-            joinedHTML = RESULT.htmlBlock.join('');
+            // add scripts to interpreted htmlBlock
+            joinedHTML = RESULT.htmlBlock.join('') + this.scripts.join('');
             // variables for sync()
             this.htmlCode = RESULT.codeList.code;
             this.htmlType = RESULT.codeList.type;        
-          
-        } else {
+        } else {        // already has pre-read pages
             let fileIncludedHTML = this.preRead[index].fileIncludedHTML;
             let cssText = this.preRead[index].cssText;
+            this.titleCode = this.preRead[index].titleCode;
             this.templateInClass = [];
             this.syncCnt = 0;
-            
             // change title
             this.changeTitle(this.titleCode);
             // chanes CSS
             if (iScope !== "body") this.changeCssFromCombinedStyle(cssText);        
-    
             // insert nested HTML modules
             let moduleIncludedHTML = this.insertModules(fileIncludedHTML);
-
             const RESULT = await this.readFurtherFromCombinedHTML(moduleIncludedHTML);
             joinedHTML = RESULT.htmlBlock.join('');
-
             this.htmlCode = RESULT.codeList.code;
             this.htmlType = RESULT.codeList.type;    
         }
@@ -110,6 +115,8 @@ class eTemplate {
             }
         }
         document.body.style.display = "block";
+        callback();
+
         return new Promise((resolve, reject) => {
             resolve('done');
         })                
@@ -124,14 +131,28 @@ class eTemplate {
     async preReadFiles(urlList, iScope) {
         let workers = [];
         for(let i=0; i<urlList.length; i++) {
-            const path = this.currentUrl().host + urlList[i];
-            workers[i] = (new Worker(this.currentUrl().host + 'js/worker.min.js'));
+            const path = new URL(urlList[i], this.currentUrl().host).href;
+            workers[i] = (new Worker(this.currentUrl().host + 'js/worker.js'));
             workers[i].postMessage({path, iScope});
             workers[i].onmessage = (e) => {
                 this.preRead[i] = e.data;
+                workers[i].terminate();
             }
         }
         return;
+    }
+
+    storeScript(currentHTML) {
+        // const BODY_REGEX = /<body*?>(\n|\r|\t|.)*?<\/body>/gm;
+        const BODY_REGEX = /<body*?>(\n|\r|\t|.)*/gm;
+        const SCRIPT_REGEX = /<script.*?>(\n|\r|\t|.)*?<\/script>/gm;
+        let body = currentHTML.match(BODY_REGEX)[0];
+        let scripts = body.match(SCRIPT_REGEX, "");
+        scripts.forEach(script => {
+            currentHTML = currentHTML.replace(script, "");
+        });
+        this.scripts = scripts;
+        return currentHTML;
     }
 
     /**
@@ -142,6 +163,8 @@ class eTemplate {
      * @returns {object} htmlBlock: interpreted codes array / codeList: object of code and type
      */
      async readFurther(currentHTML, iScope) {
+        // remove scripts in body
+        currentHTML = this.storeScript(currentHTML);
         // CSS change in HEAD
         if (iScope !== "body") await this.changeCss(currentHTML); 
         // insert nested HTML files
@@ -955,7 +978,9 @@ class eTemplate {
             // additional blocks
             // HTML
             if (type[j] == "HTML") {
-                partBlock += `eTemplateInterpreted += '${code[j]}';`;
+                if (this.removeControlText(code[j]).trim() !== "") {
+                    partBlock += `eTemplateInterpreted += '${code[j]}';`;
+                }
                 continue;
             }
             // JS
@@ -1156,23 +1181,33 @@ class eTemplate {
     changeTitle(templateTitle) {
         const regexText = `${this.openDelimiter}[^%].*?${this.closeDelimiter}`;
         const templateRegex = new RegExp(regexText, "g");
-        // interpret template of title
         let titleCode = null;
-        if (this.titleCode.trim().match(templateRegex) != null) {
+        let titleResult = "";
+        let flag = 0;
+        // interpret template of title
+        if (templateTitle.trim().match(templateRegex) != null) {
             titleCode = templateTitle
                 .trim()
                 .match(templateRegex)[0]
                 .replaceAll(`${this.openDelimiter}`, "")
                 .replaceAll(`${this.closeDelimiter}`, "");
+            flag = 1;
+        } else {
+            titleResult = templateTitle;
         }
-        let titleResult = "";
-        if (titleCode != null) {
-            titleResult = this.basicCode(titleCode);
-            document.head.querySelector("title").innerText = titleResult;
-        }
+
+        if (flag) titleResult = this.basicCode(titleCode);
+        if (document.querySelector("title")) document.querySelector("title").innerHTML = titleResult;
+    }
+
+    removeComment(html) {
+        const commentRegex = /<!--.*?-->/gm;
+        return html.replace(commentRegex, '');
     }
 
     async changeCss(newHTML) {
+        // remove comment
+        newHTML = this.removeComment(newHTML);
         // combine css in style tag and linked css
         let combinedStyle = await this.combineCss(newHTML);
         // seperate style text to template and others
@@ -1186,8 +1221,7 @@ class eTemplate {
         let cssRules = this.parseCSS(combinedStyle);
         this.cssRules = cssRules;
         const modifiedCss = this.createTextStyle(cssRules);
-        if (modifiedCss == "")
-            return;
+        if (modifiedCss == "") return;
         // remove all style tags
         document.querySelectorAll("style").forEach((style) => {
             style.parentNode.removeChild(style);
@@ -1228,7 +1262,7 @@ class eTemplate {
         document.head.appendChild(t_style);
         // remove CSS link except linked CSS from other server
         document.head.querySelectorAll("link").forEach((element) => {
-            if (element.getAttribute("rel") == "stylesheet" && !element.getAttribute("href").includes("http")) {
+            if (element.getAttribute("rel") == "stylesheet" && element.getAttribute("href").indexOf("http")<0) {
                 element.parentNode.removeChild(element);
             }
         });
@@ -1266,14 +1300,15 @@ class eTemplate {
             linkTags.push(match);
             return "";
         });
-        let relUrl = this.currentUrl().host;
 
+        let relUrl = this.currentUrl().host;
         linkTags.forEach((linkTag) => {
             let linkHref = getHref(linkTag);
-            if (!linkHref.includes("http")) {
-                urls.push(relUrl + linkHref);
+            if (linkHref.indexOf("http")<0) {
+                urls.push(new URL(linkHref, relUrl).href);
             }
         });
+
         // read and combine css files
         let importedStyles = await this.getTextFromFiles(urls);
         combinedStyle = importedStyles.reduce((acc, style) => {
@@ -1407,11 +1442,120 @@ class eTemplate {
         return modifiedCss;
     }
 
+    // partial render for data object or files
+    async renderPart(dataText = "", type = "") {
+        let source = "";
+        let result = "";
+        let path = "";
+        let tempCode = [];
+        let sync = [];
+        let returnValue = "";
+        let combinedStyle = "";
+        let cssBlock = [];
+        let cssRules = [];
+        let modifiedCss = "";
+
+        if (type.trim() == "")
+            return "select type from html, html_path";
+        if (dataText.trim() == "")
+            return "nothing to render";
+
+        switch (type) {
+            case "HTML":
+                source = dataText;
+                let { fileIncludedHTML, codeList } = await this.insertNestedHTML(source);
+                // insert nested HTML modules
+                let moduleIncludedHTML = this.insertModules(fileIncludedHTML);                
+                tempCode = this.seperateCode(moduleIncludedHTML, "second");
+                sync = this.makeSyncBlock(tempCode.types, tempCode.codes);
+
+                if (tempCode.types[0] == "JS") {
+                    tempCode.types.unshift("HTML");
+                    tempCode.codes.unshift(" ");
+                    sync = sync.map((x) => x + 1);
+                    sync.unshift(0);
+                }
+                tempCode = this.insertSync(tempCode.types, tempCode.codes, sync);
+                this.syncCnt = tempCode.syncCnt;
+                result = this.interpret(tempCode.type, tempCode.code);
+                returnValue = result.join("");
+                return {
+                    domText: returnValue,
+                    sourceType: tempCode.type,
+                    sourceCode: tempCode.code,
+                    sourceSync: sync,
+                };
+            case "CSS":
+                source = dataText;
+                source = await this.insertNestedCSS(source);
+                // seperate style text to template and others
+                tempCode = this.seperateCode(source, "second");
+                // interpret templates
+                cssBlock = this.interpret(tempCode.type, tempCode.code);
+                combinedStyle = cssBlock.join("");
+                // parse css string
+                cssRules = this.parseCSS(combinedStyle);
+                modifiedCss = this.createTextStyle(cssRules);
+                return {
+                    cssText: modifiedCss,
+                    cssRules: cssRules,
+                    cssType: tempCode.type,
+                    cssCode: tempCode.code,
+                };
+        }
+    }
+
+    async appendHTML(dataText = "", element) {
+        if (dataText=="") return "nothing to append";
+        let obj = await this.renderPart(dataText, "HTML");
+        let domText = obj.domText || "";
+        if (element == undefined) return "no element to append to";
+        const tempType = obj.sourceType || [];
+        const tempCode = obj.sourceCode || [];
+        const tempSync = obj.sourceSync || [];
+        if (this.getObjectType(element) != "DOMobject") return "invalid element to append into";
+        if (tempType.length == 0) return "nothing to append";
+        // adding template information for sync
+        this.htmlType = [...this.htmlType, ...tempType];
+        this.htmlCode = [...this.htmlCode, ...tempCode];
+        this.htmlSync = [...this.htmlSync, ...tempSync];
+        // appending interpreted html to element
+        domText = domText.trim();
+        if (domText == "") return "nothing to append";
+        element.insertAdjacentHTML("beforeend", domText);
+        return "success";
+    }
+
+    async appendCSS(dataText = "") {
+        if (dataText == "") return;
+        let cssObject = await this.renderPart(dataText, "CSS");
+        let modifiedCss = cssObject.cssText || "";
+        let cssRules = cssObject.cssRules || [];
+        let cssType = cssObject.cssType || [];
+        let cssCode = cssObject.cssCode || [];
+        let styleElement;
+        if (document.querySelector("style") == null) {
+            styleElement = document.createElement("style");
+            styleElement.appendChild(document.createTextNode(modifiedCss));
+            document.head.appendChild(styleElement);
+            this.cssRules = [...this.cssRules, ...cssRules];
+            this.cssType = [...this.cssType, ...cssType];
+            this.cssCode = [...this.cssCode, ...cssCode];
+            return "success";
+        }
+        styleElement = document.createTextNode(modifiedCss);
+        document.querySelector("style").appendChild(styleElement);
+        this.cssRules = [...this.cssRules, ...cssRules];
+        this.cssType = [...this.cssType, ...cssType];
+        this.cssCode = [...this.cssCode, ...cssCode];
+        return "success";
+    }
+
     basicCode(script) {
         try {
             return Function(`"use strict"; return ( ${script.substring(1)} )`)();
         } catch (e) {
-            return `${e.message}`;
+            return `invalid template`;
         }
     }
 
@@ -1576,6 +1720,29 @@ class eTemplate {
     removeControlText(str) {
         return str.replaceAll(/\r|\n|\t/g, "");
     }
+
+    verifyFilename(filename) {
+        if (filename.trim().length == 0) return "";
+        return new URL(filename, this.currentUrl().host).href.replaceAll(this.currentUrl().host, "");
+    }
+
+    // check object type for renderPart()
+    getObjectType(o) {
+        if (typeof HTMLElement === "object"
+            ? o instanceof HTMLElement
+            : o && typeof o === "object" && o !== null && o.nodeType === 1 && typeof o.nodeName === "string") {
+            return "DOMobject";
+        } else {
+            return o.includes("<%") && o.includes("%>")
+                ? "template"
+                : o.includes(".html")
+                    ? "html_path"
+                    : o.includes(".css")
+                        ? "css_path"
+                        : "undefined";
+        }
+    }
+
 }
 
 // mouse is on inside or outside of document
