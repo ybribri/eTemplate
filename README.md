@@ -110,9 +110,9 @@ const etm = new  eTemplate({
 const etm=new eTemplate();
 
 etm.render({
-    syncUrl: "path", 
-    scrollObj: { id: "id", block: "start | center | end" },
-    iScope: default: null | "body"
+    url: "path", 
+    scroll: { id: "id", position: "start | center | end" },
+    scope: default: null | "body"
 });
 ```
 > **eTemplate doesn't accept data. Just declare variables which is used in templates before you execute render()**
@@ -120,18 +120,18 @@ etm.render({
 #### **Arguments**
 * All the arguments are optional.
 
-> **syncUrl** : string  `syncUrl: "/feature.html"`
+> **url** : string  `url: "/feature.html"`
 
 * path of html file to replace current html with (optional)
 * Use this parameter if all the html files are rendered in single page.
 * If you omit this, render() find and render start_url, in case there is no start_url it will render current html file.
 
-> **scrollObj** : object  `scrollObj: { id: "id", block: "start | center | end" }`
+> **scroll** : object  `scroll: { id: "id", position: "start | center | end" }`
 
-* **id** : id of element to scroll to inside the html file of the second argument, sync_url
-* **block** : vertical alignment of the element. One of "start", "center", or "end"
+* **id** : id of element to scroll to inside the html file of the second argument, url
+* **position** : vertical alignment of the element. One of "start", "center", or "end"
                                                                      
-> **iScope** : string  `iScope: "body"`
+> **scope** : string  `scope: "body"`
 
 * render() finds out linked CSS files and _style_ tags, and check templates inside them. Even though there is no template, all CSS elements have to be checked for templates, and it might takes a bit.
 * If there is no template in CSS files, you can reduce a delay by setting this parameter.
