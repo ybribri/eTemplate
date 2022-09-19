@@ -220,7 +220,6 @@ class eTemplate {
         return { htmlBlock, codeList };
     }
 
-
     /**
      * updates applied templates both on HTML and CSS if there are variable changes.
      * @param {string} scope updating scope, whether it updates only HTML or also CSS.    
@@ -234,7 +233,7 @@ class eTemplate {
         // check and change title
         this.changeTitle(this.titleCode);
 
-        // put values of input tags to related variables
+        // change related variables from input values
         const inputEls = document.querySelectorAll(`input.${eClass}`);
         for (let i = 0; i < inputEls.length; i++) {
             let cList = inputEls[i];
@@ -246,33 +245,34 @@ class eTemplate {
             } else {
                 temp += "=" + (cList.value ? `"${this.escapeHtml(cList.value)}";` : '"";');
             }
-            try {
-                let temp_code = this.controlCode(temp);
-            } catch (error) {
-                return error;
-            }
+            try { let temp_code = this.controlCode(temp); } 
+            catch (error) { return error; }
         }
 
         // interprete registered templates
         let htmlBlock = this.interpretPart(this.htmlType, this.htmlCode, eClass);
-
         // change current template to newly interpreted templates
         const eclassEls = document.querySelectorAll(`.${eClass}`);
         for (let i = 0; i < eclassEls.length; i++) {
-
             let cList = eclassEls[i];
             let classLists = [...cList.classList];
 
             // get attribute to change from class and index of sync count
             let classes = classLists.find(el => el.startsWith(eClass+'_'));
-            let attrList = (classes !== undefined) ? classes.split("_").pop().split("+") : [];
             let isTemplateInAttribute = (classes !== undefined) ? true : false;
+            let attrList = (isTemplateInAttribute) ? classes.split("_").pop().split("+") : [];
             let classCnt = classLists.find(el => el.startsWith(eClass+'Cnt'));
             let index = (classCnt !== undefined) ? parseInt(classCnt.replace(`${eClass}Cnt`, ""), 10) : 0;
 
             if (isTemplateInAttribute) {
                 for (let j = 0; j < attrList.length; j++) {
-
+                    // if didn't change, continue
+                    if (Array.isArray(htmlBlock[index])) {
+                        if (this.templateInClass[index][j] === htmlBlock[index][j]) continue;
+                    } else {
+                        if (this.templateInClass[index][j] === htmlBlock[index]) continue;
+                    }
+                    // attribute: class
                     if (attrList[j] == "class") {
                         if (Array.isArray(htmlBlock[index])) {
                             if (this.templateInClass[index].length !== 0 ) cList.classList.remove(this.templateInClass[index][j]);
@@ -283,6 +283,7 @@ class eTemplate {
                             if (htmlBlock[index] !== '' ) cList.classList.add(htmlBlock[index]);
                             this.templateInClass[index][j] = htmlBlock[index];
                         }
+                    // attribute: data
                     } else if (attrList[j].includes('data-')){
                         if (Array.isArray(htmlBlock[index])) {
                             let datasetName = attrList[j].substring(attrList[j].indexOf('data-')+5);
@@ -297,6 +298,7 @@ class eTemplate {
                             cList.dataset[datasetName] = temp;
                             this.templateInClass[index][j] = htmlBlock[index];
                         }
+                    // attribute: others
                     } else {
                         if (Array.isArray(htmlBlock[index])) {
                             temp = cList.getAttribute(attrList[j]);
@@ -312,26 +314,24 @@ class eTemplate {
                     }
                 }
             } else {
+                if (cList.innerHTML === htmlBlock[index]) continue;
                 this.removeAllChildNodes(cList);
                 cList.insertAdjacentHTML("afterbegin", htmlBlock[index]);
             }
         }
-
-        if (scope != "body") {
-            this.syncCss();
-        }
+        if (scope != "body") this.syncCss();
     }
 
     /**
-     * update templates in CSS where there are changes in variables 
+     * update templates in CSS that changed there are changes in variables 
      * @returns nothing
      */
     syncCss() {
-        // if there is no template to interpret, return
+        // if there is no template of CSS to interpret, go back
         if (this.cssType.length == 0 || !this.cssType.includes("JS")) return;
-        // interpret seperated CSS and parse it to virtual CSS rules
+        // interpret seperated CSS and parse it to CSS rules
         let htmlBlock = this.interpret(this.cssType, this.cssCode);
-        let cssRules = this.parseCSS(htmlBlock.join("")); // changed CSS
+        let cssRules = this.parseCSS(htmlBlock.join("")); // new rules of CSS
         // find combined style tag
         let sheetNo = 0;
         for (let i = 0; i < document.styleSheets.length; i++) {
@@ -340,15 +340,14 @@ class eTemplate {
                 break;
             }
         }
-
-        let oRules = this.cssRules; // previously recorded cssRules 
-        let oRulesLen = oRules.length;
         const emptySpace = /\s+|\\n/g;
+        let oRules = this.cssRules; // old rules 
+        let oRulesLen = oRules.length;
         let modifiedCss = "";
-        let toAdd = [];
-        let updatedRules = [];
-        let cssRulesLen = cssRules.length;
-        // check CSS change
+        let toAdd = []; // temporarily stores rules to add
+        let updatedRules = []; // temporarily stores rules to update
+        let cssRulesLen = cssRules.length; 
+        // check and update CSS change
         for (let i = 0; i < cssRulesLen; i++) {
             let cssRule = cssRules[i];
             let cssType = cssRule.type == undefined ? "" : cssRule.type;
@@ -498,7 +497,7 @@ class eTemplate {
             }
         }
 
-        // delete css
+        // delete rules
         let cssLength = oRules.length;
         let ruleLength = 0;
         let styleLength = 0;
@@ -544,7 +543,7 @@ class eTemplate {
             }
         }
 
-        // add css
+        // add rules
         let toAddLen = toAdd.length;
         for (let i = 0; i < toAddLen; i++) {
             let [addType, rule1, rule2, style1, prop, value = ""] = toAdd[i];
@@ -563,7 +562,7 @@ class eTemplate {
                 }
             }
         }
-        // replace this.cssRules
+        // stores changed rules to this.cssRules
         this.cssRules = JSON.parse(JSON.stringify(cssRules));
     }
 
@@ -1286,7 +1285,8 @@ class eTemplate {
         let relativeUrls = [];
         urls.forEach(url => {
             relativeUrls.push(this.getComparedPath(url, this.currentUrl().host));
-        })
+        });
+
         for (let i=0; i<importedStyles.length; i++) {
             importedStyles[i] = this.replaceRelativeUrl(importedStyles[i], relativeUrls[i]);
         }
@@ -1373,10 +1373,11 @@ class eTemplate {
                 let baseArr = baseUrl.split('/');
                 baseArr.pop();
                 baseArr.pop();
-                baseUrl = baseArr.join("/")+"/";
+                baseUrl = "."+baseArr.join("/")+"/";
                 return baseUrl+oldUrl.substring(3);
             }
         }
+
         let newStyle = style.replace(urlRegex, replacer);
         return newStyle;
     } 
@@ -1403,7 +1404,7 @@ class eTemplate {
                 let baseArr = baseUrl.split('/');
                 baseArr.pop();
                 baseArr.pop();
-                baseUrl = baseArr.join("/")+"/";
+                baseUrl = "."+baseArr.join("/")+"/";
                 return baseUrl+oldUrl.substring(3);
             }
         }
