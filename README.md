@@ -7,13 +7,13 @@
 * Template for variables, template for statements, modules, and nested HTML or CSS files
 * Using web-workers for pre-reading and integrating pages for single page rendering through background thread
 
-* This is [demo and detailed documentation](https://ybrians.cafe24.com/etemplate/)
+* This is [demo and detailed documentation](https://ybrians.cafe24.com/etm/)
 
 ### TAGS
 ```
 <%    Template tag, for contorl-flow like for-loop, if, select, while, forEach, and so on / no output
 <%=   for variables / one line calculation, manipulation of variables that returns value
-<%#   module
+<%#   component
 <%%   Output a literal '<%'
 %>    End of tag
 
@@ -21,7 +21,7 @@
     @import " ... path/filename.css";
 ```
 * templates can be used also in imported css files
-* HTML modules and CSS files can be nested multiple levels.
+* HTML modules, components and CSS files can be nested through multiple levels.
 
 ```
     feature.html >  _header.html
@@ -113,7 +113,7 @@ etm.render({
     url: "path", 
     scroll: { id: "id", position: "start | center | end" },
     scope: default: null | "body"
-});
+}, callback);
 ```
 > **eTemplate doesn't accept data. Just declare variables which is used in templates before you execute render()**
 
@@ -136,6 +136,11 @@ etm.render({
 * render() finds out linked CSS files and _style_ tags, and check templates inside them. Even though there is no template, all CSS elements have to be checked for templates, and it might takes a bit.
 * If there is no template in CSS files, you can reduce a delay by setting this parameter.
 * If iscope is set to "body", render() skips checking CSS files.
+
+> **callback** : function
+
+* render() is asynchoronous function that includes file-reading. If something has to be done after rendering is finished, use callback function.
+* without option object, you can use it only with callback function. eg. etm.render(callback) or etm.render(()=>{ ... });
 
 ### sync()
 > refresh all the elements that has templates on current page
@@ -164,4 +169,4 @@ sync("body");
 * If you omit this, sync() will refresh all the templates of HTML and CSS.
 * In case there is no template in CSS, you can speed up refereshing templates.
 
-* for more details, visit [demo and detailed documentation](https://ybrians.cafe24.com/etemplate/)
+* for more details, visit [demo and detailed documentation](https://ybrians.cafe24.com/etm/)

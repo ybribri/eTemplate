@@ -7,6 +7,8 @@
  * ! ver 1.90 : Use worker
  * ! ver 2.00 : add appendHTML and appendCSS
  * ! ver 2.01 : extend usage of template into attributes
+ * ! ver 2.10 : extend components usage as a simple variable or a function
+ * ! ver 2.20 : bug fix - existing class process
   * Render and sync state changes of variable to HTML and CSS using template literals 
  * @class
  * @param {string} openDelimiter start tag of template
@@ -50,15 +52,15 @@ class eTemplate {
      */
 
     async render({ url: fileName = "", scroll = {}, scope = "" } = {}, callback = function() {} ) {
-        this.syncCnt = 0;
-        // if there is no object and only function
-        if (typeof arguments[0] === 'function') callback = arguments[0];
          /**
          * ! Priority of fileName
          * 1. url in fileName
          * 2. url in startUrl
          * 3. this file's url
          */
+        this.syncCnt = 0;
+        // if there is no object and only function
+        if (typeof arguments[0] === 'function') callback = arguments[0];        
         fileName = fileName === "" ? (this.startUrl !== "" ? this.startUrl : this.currentUrl().filename) : fileName;
         // adjust relative pathname to match host url
         fileName = this.verifyFilename(fileName);
@@ -112,9 +114,7 @@ class eTemplate {
             let blockArr = ["start", "center", "end"];
             let isInBlock = blockArr.some((el) => el == scroll.position);
             scroll.position = isInBlock ? scroll.position : "center";
-            if (targetElement !== null) {
-                document.getElementById(scroll.id).scrollIntoView({ block: scroll.position });
-            }
+            if (targetElement !== null) targetElement.scrollIntoView({ block: scroll.position });
         }
         document.body.style.display = "block";
         callback();
@@ -150,9 +150,7 @@ class eTemplate {
         if (temp === null) return currentHTML;
         scripts = temp[0].match(SCRIPT_REGEX, "");
         if (scripts === null ) return currentHTML;
-        scripts.forEach(script => {
-            currentHTML = currentHTML.replace(script, "");
-        });
+        scripts.forEach(script => currentHTML = currentHTML.replace(script, ""));
         this.scripts = scripts;
         return currentHTML;
     }
@@ -183,7 +181,7 @@ class eTemplate {
         if (types[0] == "JS") {
             types.unshift("HTML");
             codes.unshift(" ");
-            sync = sync.map((x) => x + 1);
+            sync = sync.map(x => x + 1);
             sync.unshift(0);
         }
         // insert class or span tag for refreshing templates
@@ -208,7 +206,7 @@ class eTemplate {
         if (types[0] == "JS") {
             types.unshift("HTML");
             codes.unshift(" ");
-            sync = sync.map((x) => x + 1);
+            sync = sync.map(x => x + 1);
             sync.unshift(0);
         }
         // insert class or span tag for refreshing templates
@@ -237,7 +235,6 @@ class eTemplate {
         const inputEls = document.querySelectorAll(`input.${eClass}`);
         for (let i = 0; i < inputEls.length; i++) {
             let cList = inputEls[i];
-            temp = "";
             temp = cList.getAttribute("data-sync");
             if (temp == null) continue;
             if (cList.type == "number") {
@@ -245,7 +242,7 @@ class eTemplate {
             } else {
                 temp += "=" + (cList.value ? `"${this.escapeHtml(cList.value)}";` : '"";');
             }
-            try { let temp_code = this.controlCode(temp); } 
+            try { this.controlCode(temp); } 
             catch (error) { return error; }
         }
 
@@ -327,7 +324,7 @@ class eTemplate {
      * @returns nothing
      */
     syncCss() {
-        // if there is no template of CSS to interpret, go back
+        // if there is no template in CSS, go back
         if (this.cssType.length == 0 || !this.cssType.includes("JS")) return;
         // interpret seperated CSS and parse it to CSS rules
         let htmlBlock = this.interpret(this.cssType, this.cssCode);
@@ -581,18 +578,16 @@ class eTemplate {
         let urls = []; // url for inclusion
         let orders = []; // index of include script out of code array
         let tempString = "";
-        let cnt = 0;
         let currentBodyHTML = "";
         currentBodyHTML = currentHTML.match(bodyRegexp) === null ? currentHTML : currentHTML.match(bodyRegexp)[0].replace(bodyStartRegexp, "").replace(bodyEndRegexp, "");
         let { codes, types } = this.seperateCode(currentBodyHTML, "first")
         let typeLen =types.length;
-        let relUrl = this.currentUrl().host;
+        let hostUrl = this.currentUrl().host;
         for (let i = 0; i < typeLen; i++) {
             if (types[i] == "JS" && includeRegexp.test(codes[i])) {
                 tempString = codes[i].match(includeRegexp)[0].replace(includeStartRegexp, '').replace(includeEndRegexp, '');
-                urls.push(new URL( tempString, relUrl).href);
-                orders[cnt] = i;
-                cnt++;
+                urls.push(new URL(tempString, hostUrl).href);
+                orders.push(i);
             }
         }
 
@@ -651,7 +646,7 @@ class eTemplate {
         for (let i = 0; i < typeLen; i++) {
             // check whether a code has a module
             if (types[i] == "JS" && codes[i].includes("<%#")) {
-                let tempString = ' ' + codes[i].match(moduleRegexp)[0].replace(moduleStartRegexp,'').replace(moduleEndRegexp,'');
+                let tempString = ' '+codes[i].match(moduleRegexp)[0].replace(moduleStartRegexp,'').replace(moduleEndRegexp,'');
                 try {
                     codes[i] = this.basicCode(tempString);
                     cnt++;
@@ -662,9 +657,10 @@ class eTemplate {
             }
         }
         let result = codes.join("");
-        if (cnt !== 0)
+        if (cnt !== 0) {
             // recursive call for multi-layer modules
             result = this.insertModules(result);
+        }
         return result;
     }
 
@@ -1028,6 +1024,13 @@ class eTemplate {
                             }
                         }
 
+                        for (let j= i-1; j <= endBlockIndex; j++) {
+                            if (type[j] === "HTML" && code[j].match(attrRegex)!==null && type[j + 1] == "JS") {
+                                let classIndex = code[j].lastIndexOf('class');
+                                if (classIndex > startPos) { classPos = j; }
+                            }
+                        }
+
                         // if class is not the first attribute, change orders
                         if (classPos!==(i-1) && attrList.includes("class")) {
                             // change order of attr list
@@ -1072,7 +1075,7 @@ class eTemplate {
                             if (type[j] == "JS") interpretedTemplate.push(this.basicCode(code[j].substring(1)));
                         }
                         this.templateInClass[syncCnt]=interpretedTemplate;
-
+                        
                         if (classPos===-1) {
                             // there is no class in the block
                             startPos = prevCode.lastIndexOf("<");
@@ -1638,6 +1641,7 @@ class eTemplate {
         try {
             return Function(`"use strict"; return ( ${script.substring(1)} )`)();
         } catch (e) {
+            console.error(e);
             return `invalid template`;
         }
     }
@@ -1646,6 +1650,7 @@ class eTemplate {
         try {
             return Function(`"use strict"; ${script.replace(/[\n\r\t]/g, "")}`)();
         } catch (e) {
+            console.error(e);
             return `invalid template block`;
         }
     }
@@ -1825,7 +1830,6 @@ class eTemplate {
     }
 
 }
-
 // mouse is on inside or outside of document
 document.onmouseover = function () {
     window.innerDocClick = true;
