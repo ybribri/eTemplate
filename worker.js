@@ -8,12 +8,14 @@ class myWorker {
         this.commentDelimiter = openDelimiter + "%"; // start tag of comment template
         this.url = "";
         this.titleCode = "";
+        this.metaArray = [];
     }
 
     async readFurther(scope, currentUrl) {
         let cssText ="";
         const res = await fetch(currentUrl);
         let currentHTML = await res.text();
+        this.readMeta(currentHTML);
         this.getTitle(currentHTML);
         this.url = currentUrl;
         // CSS change in HEAD
@@ -26,7 +28,8 @@ class myWorker {
             fileIncludedHTML,
             cssText,
             filename: this.currentUrl().filename,
-            titleCode: this.titleCode
+            titleCode: this.titleCode,
+            metaArray: this.metaArray
         };
     }
 
@@ -94,10 +97,7 @@ class myWorker {
         });
         // new HTML with included HTML
         fileIncludedHTML = this.removeComment(codeList.join(""));
-        ({ urls, orders, codeList } = this.findInclude(fileIncludedHTML, relativeUrls));
-        if (urls.length == 0) return { fileIncludedHTML, codeList };
-        ({ fileIncludedHTML, codeList } = await this.insertNestedHTML(fileIncludedHTML, relativeUrls));
-        return { fileIncludedHTML, codeList };
+        return await this.insertNestedHTML(fileIncludedHTML, relativeUrls);
     }
 
     /**
@@ -139,6 +139,29 @@ class myWorker {
         const titleCode = headHTML.match(titleRegexp) == null ? "" : headHTML.match(titleRegexp)[0].replace("<title>", "").replace("</title>", "").trim();
         this.titleCode = titleCode.length > 0 ? titleCode : this.titleCode;
     }        
+
+    readMeta(currentHTML) {
+        const metaRegStr = `\\<meta[\\s\\S]*?[^${this.closeDelimiter}]\\>`;
+        const metaRegex = new RegExp(metaRegStr, 'g');
+        const attributeRegex = /([\w|\-|\_]*) *= *((['"])?((\\\3|[^\3])*?)\3|(\w+))/g;
+        const metaTags = [...currentHTML.matchAll(metaRegex)];
+        let metaArr = [];
+        metaTags.forEach((metaTag, i) => {
+            let attributes=[...metaTag[0].matchAll(attributeRegex)];
+            for(let j=0; j<attributes.length; j++) {
+                if (attributes[j][4].indexOf(this.openDelimiter)>-1) {
+                    metaArr.push({
+                        metaNo: i,
+                        attributeNo: j,
+                        nodeName: attributes[j][1],
+                        nodeValue: attributes[j][4]
+                    })
+                }
+            }
+        });
+        this.metaArray = JSON.parse(JSON.stringify(metaArr));
+        return;
+    }
 
     async changeCss(newHTML) {
         // remove comment
@@ -257,9 +280,11 @@ class myWorker {
         const urlRegex = /(@import *['"])(.*?)(['"])|(url\(['"]?)(.*?)(['"]?\))/g;
         function replacer (match, p1, p2, p3, p4, p5, p6) {
             if (p1 == undefined) {
+                if (p5.indexOf('http')>-1) return p4+p5+p6;                
                 p5 = compareUrls(p5, relativeUrl);
                 return p4+p5+p6;
             } else {
+                if (p2.indexOf('http')>-1) return p1+p2+p3;                
                 p2 = compareUrls(p2, relativeUrl); 
                 return p1+p2+p3;
             }
@@ -333,16 +358,8 @@ class myWorker {
         });
         // new CSS with imported CSS
         finalCSS = codes.join("");
-        // find further nested @import
-        ({ urls, orders, codes, media } = this.findImport(finalCSS));
-        if (urls.length != 0) {
-            // recursively insert css from imported css files
-            finalCSS = await this.insertNestedCSS(finalCSS);
-            return finalCSS;
-        } else {
-            // if there is no more @import...
-            return finalCSS;
-        }
+        // recursively insert css from imported css files
+        return await this.insertNestedCSS(finalCSS);
     }
 
     insertMedia(code, media) {
@@ -447,6 +464,7 @@ onmessage = (e) => {
         result.cssText = res.cssText;
         result.fileName = res.filename;
         result.titleCode = res.titleCode;
+        result.metaArray = res.metaArray;
         postMessage(result);
     });
 }

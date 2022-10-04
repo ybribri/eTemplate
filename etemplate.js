@@ -8,7 +8,8 @@
  * ! ver 2.00 : add appendHTML and appendCSS
  * ! ver 2.01 : extend usage of template into attributes
  * ! ver 2.10 : extend components usage as a simple variable or a function
- * ! ver 2.20 : bug fix - existing class process
+ * ! ver 2.20 : bug fix on existing classes and add function of templates in meta tag
+ * ! ver 2.30 : improve on multiple templates in attributes
   * Render and sync state changes of variable to HTML and CSS using template literals 
  * @class
  * @param {string} openDelimiter start tag of template
@@ -30,6 +31,7 @@ class eTemplate {
         this.syncCnt = 0; // number of sync to update
         this.templateInClass = []; // template in class
         this.titleCode = ""; // HTML for title 
+        this.metaArray = []; // META info with templates
         this.startUrl = startUrl; // default url replacing index.html
         this.syncClass = syncClass; // class name to update
         this.openDelimiter = openDelimiter; // start tag of template
@@ -77,6 +79,9 @@ class eTemplate {
             //  read first layer HTML
             const RESPONSE = await fetch(myUrl);
             const CURRENTHTML = await RESPONSE.text();
+            // read META
+            this.readMeta(CURRENTHTML);
+            this.changeMeta();
             // change title
             this.getTitle(CURRENTHTML);        
             this.changeTitle(this.titleCode);
@@ -91,8 +96,10 @@ class eTemplate {
             let fileIncludedHTML = this.preRead[index].fileIncludedHTML;
             let cssText = this.preRead[index].cssText;
             this.titleCode = this.preRead[index].titleCode;
+            this.metaArray = this.preRead[index].metaArray;
             this.templateInClass = [];
             this.syncCnt = 0;
+            this.changeMeta();
             // change title
             this.changeTitle(this.titleCode);
             // chanes CSS
@@ -177,7 +184,7 @@ class eTemplate {
         let { types, codes } = this.seperateCode(moduleIncludedHTML, "second");
         // make code blocks like for, if, switch...
         let sync = this.makeSyncBlock(types, codes);
-        // add "HTML" if first code="JS"
+           // add "HTML" if first code="JS"
         if (types[0] == "JS") {
             types.unshift("HTML");
             codes.unshift(" ");
@@ -228,26 +235,25 @@ class eTemplate {
         let eClass = this.syncClass;
         const classtext = '${eClass}_';
         const classRegex = new RegExp(classtext);
+        // check and change meta info
+        this.changeMeta();
         // check and change title
         this.changeTitle(this.titleCode);
-
         // change related variables from input values
         const inputEls = document.querySelectorAll(`input.${eClass}`);
         for (let i = 0; i < inputEls.length; i++) {
             let cList = inputEls[i];
             temp = cList.getAttribute("data-sync");
             if (temp == null) continue;
-            if (cList.type == "number") {
-                temp += "=" + (cList.value ? `${this.escapeHtml(cList.value)};` : '"";');
-            } else {
-                temp += "=" + (cList.value ? `"${this.escapeHtml(cList.value)}";` : '"";');
-            }
+            let isQuote = (cList.type=="number") ? '' : '"';
+            temp += "=" + (cList.value ? `${isQuote}${this.escapeHtml(cList.value)}${isQuote};` : '"";');
             try { this.controlCode(temp); } 
             catch (error) { return error; }
         }
 
         // interprete registered templates
-        let htmlBlock = this.interpretPart(this.htmlType, this.htmlCode, eClass);
+        let htmlBlock = this.interpretPart(this.htmlType, this.htmlCode);
+
         // change current template to newly interpreted templates
         const eclassEls = document.querySelectorAll(`.${eClass}`);
         for (let i = 0; i < eclassEls.length; i++) {
@@ -257,63 +263,38 @@ class eTemplate {
             // get attribute to change from class and index of sync count
             let classes = classLists.find(el => el.startsWith(eClass+'_'));
             let isTemplateInAttribute = (classes !== undefined) ? true : false;
-            let attrList = (isTemplateInAttribute) ? classes.split("_").pop().split("+") : [];
             let classCnt = classLists.find(el => el.startsWith(eClass+'Cnt'));
             let index = (classCnt !== undefined) ? parseInt(classCnt.replace(`${eClass}Cnt`, ""), 10) : 0;
 
-            if (isTemplateInAttribute) {
-                for (let j = 0; j < attrList.length; j++) {
-                    // if didn't change, continue
-                    if (Array.isArray(htmlBlock[index])) {
-                        if (this.templateInClass[index][j] === htmlBlock[index][j]) continue;
-                    } else {
-                        if (this.templateInClass[index][j] === htmlBlock[index]) continue;
-                    }
-                    // attribute: class
-                    if (attrList[j] == "class") {
-                        if (Array.isArray(htmlBlock[index])) {
-                            if (this.templateInClass[index].length !== 0 ) cList.classList.remove(this.templateInClass[index][j]);
-                            if (htmlBlock[index][j] !== '' ) cList.classList.add(htmlBlock[index][j]);
-                            this.templateInClass[index][j] = htmlBlock[index][j];
-                        } else {
-                            if (this.templateInClass[index][j] !== '' ) cList.classList.remove(this.templateInClass[index][j]);
-                            if (htmlBlock[index] !== '' ) cList.classList.add(htmlBlock[index]);
-                            this.templateInClass[index][j] = htmlBlock[index];
-                        }
-                    // attribute: data
-                    } else if (attrList[j].includes('data-')){
-                        if (Array.isArray(htmlBlock[index])) {
-                            let datasetName = attrList[j].substring(attrList[j].indexOf('data-')+5);
-                            temp = cList.dataset[datasetName];
-                            temp = temp.replace(this.templateInClass[index][j], htmlBlock[index][j]);
-                            cList.dataset[datasetName] = temp;
-                            this.templateInClass[index][j] = htmlBlock[index][j];
-                        } else {
-                            let datasetName = attrList[j].substring(attrList[j].indexOf('data-')+5);
-                            temp = cList.dataset[datasetName];
-                            temp = temp.replace(this.templateInClass[index][j], htmlBlock[index]);
-                            cList.dataset[datasetName] = temp;
-                            this.templateInClass[index][j] = htmlBlock[index];
-                        }
-                    // attribute: others
-                    } else {
-                        if (Array.isArray(htmlBlock[index])) {
-                            temp = cList.getAttribute(attrList[j]);
-                            temp = temp.replace(this.templateInClass[index][j], htmlBlock[index][j]);
-                            cList.setAttribute(attrList[j], temp);
-                            this.templateInClass[index][j] = htmlBlock[index][j];
-                        } else {
-                            temp = cList.getAttribute(attrList[j]);
-                            temp = temp.replace(this.templateInClass[index][j], htmlBlock[index]);
-                            cList.setAttribute(attrList[j], temp);
-                            this.templateInClass[index][j] = htmlBlock[index];
-                        }
-                    }
-                }
-            } else {
-                if (cList.innerHTML === htmlBlock[index]) continue;
+            if (!isTemplateInAttribute) {
+                if (cList.innerHTML == htmlBlock[index]) continue;
                 this.removeAllChildNodes(cList);
                 cList.insertAdjacentHTML("afterbegin", htmlBlock[index]);
+                continue;                
+            }
+
+            for (let j = 0; j < htmlBlock[index].length; j++) {
+                // if didn't change, continue
+                if (this.templateInClass[index][j][1] == htmlBlock[index][j]) continue;
+                // attribute: class
+                if (this.templateInClass[index][j][0] == "class") {
+                    cList.classList.remove(this.templateInClass[index][j][1]);
+                    cList.classList.add(htmlBlock[index][j]);
+                    this.templateInClass[index][j][1] = htmlBlock[index][j];
+                // attribute: data
+                } else if (this.templateInClass[index][j][0].includes('data-')){
+                    let datasetName = this.templateInClass[index][j][0].substring(this.templateInClass[index][j][0].indexOf('data-')+5);
+                    temp = cList.dataset[datasetName];
+                    temp = temp.replace(this.templateInClass[index][j][1], htmlBlock[index][j]);
+                    cList.dataset[datasetName] = temp;
+                    this.templateInClass[index][j][1] = htmlBlock[index][j];
+                // attribute: others
+                } else {
+                    temp = cList.getAttribute(this.templateInClass[index][j][0]);
+                    temp = temp.replace(this.templateInClass[index][j][1], htmlBlock[index][j]);
+                    cList.setAttribute(this.templateInClass[index][j][0], temp);
+                    this.templateInClass[index][j][1] = htmlBlock[index][j];
+                }
             }
         }
         if (scope != "body") this.syncCss();
@@ -363,17 +344,17 @@ class eTemplate {
                         }
                     }
                     // if found the same keyframes rules, change to new one
-                    if (currentIndex > -1) {
-                        let oldText = oRules[currentIndex].styles;
-                        let newText = cssRule.styles;
-                        if (oldText.replace(emptySpace, "") != newText.replace(emptySpace, "")) {
-                            document.styleSheets[sheetNo].deleteRule(currentIndex);
-                            document.styleSheets[sheetNo].insertRule(newText, currentIndex);
-                        }
-                        updatedRules.push([currentIndex, -2, 0, 7]);
-                    } else {
+                    if (currentIndex == -1) {
                         toAdd.push(["rule", i, -1, -1, cssRule.styles]);
+                        break;
                     }
+                    let oldText = oRules[currentIndex].styles;
+                    let newText = cssRule.styles;
+                    if (oldText.replace(emptySpace, "") != newText.replace(emptySpace, "")) {
+                        document.styleSheets[sheetNo].deleteRule(currentIndex);
+                        document.styleSheets[sheetNo].insertRule(newText, currentIndex);
+                    }
+                    updatedRules.push([currentIndex, -2, 0, 7]);
                     break;
                 case "media":
                 case "supports":
@@ -386,50 +367,7 @@ class eTemplate {
                             break;
                         }
                     }
-                    if (currentIndex > -1) {
-                        cssRule.subStyles.forEach((subStyle, j) => {
-                            selector = subStyle.selector;
-                            let currentSubIndex = -1;
-                            let subStylesLen = oRules[currentIndex].subStyles.length;
-                            for (let cj = 0; cj < subStylesLen; cj++) {
-                                if (oRules[currentIndex].subStyles[cj].selector == selector) {
-                                    currentSubIndex = cj;
-                                    break;
-                                }
-                            }
-                            if (currentSubIndex > -1) {
-                                subStyle.rules.forEach((rule, k) => {
-                                    let currentStyle = -1;
-                                    let ruleLen = oRules[currentIndex].subStyles[currentSubIndex].rules.length;
-                                    for (let ck = 0; ck < ruleLen; ck++) {
-                                        let styleKey = oRules[currentIndex].subStyles[currentSubIndex].rules[ck].key;
-                                        if (styleKey == rule.key) {
-                                            currentStyle = ck;
-                                            break;
-                                        }
-                                    }
-                                    if (currentStyle > -1) {
-                                        let key = oRules[currentIndex].subStyles[currentSubIndex].rules[currentStyle].key;
-                                        let oldValue = oRules[currentIndex].subStyles[currentSubIndex].rules[currentStyle].value;
-                                        let newValue = rule.value;
-                                        if (oldValue != newValue) {
-                                            document.styleSheets[sheetNo].cssRules[currentIndex].cssRules[currentSubIndex].style.setProperty(key, newValue);
-                                        }
-                                        updatedRules.push([currentIndex, currentSubIndex, currentStyle, typeNo]);
-                                    } else {
-                                        toAdd.push(["style", i, j, k, rule.key, rule.value]);
-                                    }
-                                });
-                            } else {
-                                modifiedCss = "    " + subStyle.selector + " {\n";
-                                for (let k = 0; k < subStyle.rules.length; k++) {
-                                    modifiedCss += `        ${subStyle.rules[k].key}: ${subStyle.rules[k].value};\n`;
-                                }
-                                modifiedCss += "    }\n";
-                                toAdd.push(["rule", i, j, -1, modifiedCss]);
-                            }
-                        });
-                    } else {
+                    if (currentIndex == -1) {
                         modifiedCss = cssRule.selector + " {\n";
                         let cssRuleSubStylesLen = cssRule.subStyles.length;
                         for (let j = 0; j < cssRuleSubStylesLen; j++) {
@@ -443,8 +381,53 @@ class eTemplate {
                         }
                         modifiedCss += "}\n";
                         toAdd.push(["rule", i, -1, -1, modifiedCss]);
+                        break;                        
                     }
-
+                    
+                    for(let j=0; j<cssRule.subStyles.length; j++) {
+                        let subStyle = cssRule.subStyles[j];
+                        selector = subStyle.selector;
+                        let currentSubIndex = -1;
+                        let subStylesLen = oRules[currentIndex].subStyles.length;
+                        for (let cj = 0; cj < subStylesLen; cj++) {
+                            if (oRules[currentIndex].subStyles[cj].selector == selector) {
+                                currentSubIndex = cj;
+                                break;
+                            }
+                        }
+                        if (currentSubIndex == -1) {
+                            modifiedCss = "    " + subStyle.selector + " {\n";
+                            for (let k = 0; k < subStyle.rules.length; k++) {
+                                modifiedCss += `        ${subStyle.rules[k].key}: ${subStyle.rules[k].value};\n`;
+                            }
+                            modifiedCss += "    }\n";
+                            toAdd.push(["rule", i, j, -1, modifiedCss]);
+                            continue;
+                        }
+                        for (let k=0; k<subStyle.rules.length; k++) {
+                            let rule = subStyle.rules[k];
+                            let currentStyle = -1;
+                            let ruleLen = oRules[currentIndex].subStyles[currentSubIndex].rules.length;
+                            for (let ck = 0; ck < ruleLen; ck++) {
+                                let styleKey = oRules[currentIndex].subStyles[currentSubIndex].rules[ck].key;
+                                if (styleKey == rule.key) {
+                                    currentStyle = ck;
+                                    break;
+                                }
+                            }
+                            if (currentStyle == -1) {
+                                toAdd.push(["style", i, j, k, rule.key, rule.value]);
+                                continue;
+                            }
+                            let key = oRules[currentIndex].subStyles[currentSubIndex].rules[currentStyle].key;
+                            let oldValue = oRules[currentIndex].subStyles[currentSubIndex].rules[currentStyle].value;
+                            let newValue = rule.value;
+                            if (oldValue != newValue) {
+                                document.styleSheets[sheetNo].cssRules[currentIndex].cssRules[currentSubIndex].style.setProperty(key, newValue);
+                            }
+                            updatedRules.push([currentIndex, currentSubIndex, currentStyle, typeNo]);                            
+                        }
+                    }
                     break;
                 case "":
                 case "font-face":
@@ -457,31 +440,7 @@ class eTemplate {
                             break;
                         }
                     }
-                    if (currentIndex > -1) {
-                        let cssRuleRulesLen = cssRule.rules.length;
-                        for (let j = 0; j < cssRuleRulesLen; j++) {
-                            let rule = cssRule.rules[j];
-                            let currentStyle = -1;
-                            let oRulesRulesLen = oRules[currentIndex].rules.length;
-                            for (let cj = 0; cj < oRulesRulesLen; cj++) {
-                                let oldKey = oRules[currentIndex].rules[cj].key;
-                                if (oldKey == rule.key) {
-                                    currentStyle = cj;
-                                    break;
-                                }
-                            }
-                            if (currentStyle > -1) {
-                                let key = oRules[currentIndex].rules[currentStyle].key;
-                                let oldValue = oRules[currentIndex].rules[currentStyle].value;
-                                let newValue = rule.value;
-                                if (oldValue != newValue) document.styleSheets[sheetNo].cssRules[currentIndex].style.setProperty(key, newValue);
-                                updatedRules.push([currentIndex, -1, currentStyle, typeNo]);
-                            } else {
-                                modifiedCss = `    ${rule.key}: ${rule.value};\n`;
-                                toAdd.push(["style", i, -1, j, rule.key, rule.value]);
-                            }
-                        }
-                    } else {
+                    if (currentIndex == -1) {
                         modifiedCss = cssRule.selector + " {\n";
                         let cssRuleRulesLen = cssRule.rules.length;
                         for (let j = 0; j < cssRuleRulesLen; j++) {
@@ -489,6 +448,30 @@ class eTemplate {
                         }
                         modifiedCss += "}\n";
                         toAdd.push(["rule", i, -1, -1, modifiedCss]);
+                        break;
+                    }
+                    let cssRuleRulesLen = cssRule.rules.length;
+                    for (let j = 0; j < cssRuleRulesLen; j++) {
+                        let rule = cssRule.rules[j];
+                        let currentStyle = -1;
+                        let oRulesRulesLen = oRules[currentIndex].rules.length;
+                        for (let cj = 0; cj < oRulesRulesLen; cj++) {
+                            let oldKey = oRules[currentIndex].rules[cj].key;
+                            if (oldKey == rule.key) {
+                                currentStyle = cj;
+                                break;
+                            }
+                        }
+                        if (currentStyle == -1) {
+                            modifiedCss = `    ${rule.key}: ${rule.value};\n`;
+                            toAdd.push(["style", i, -1, j, rule.key, rule.value]);
+                            continue;
+                        }
+                        let key = oRules[currentIndex].rules[currentStyle].key;
+                        let oldValue = oRules[currentIndex].rules[currentStyle].value;
+                        let newValue = rule.value;
+                        if (oldValue != newValue) document.styleSheets[sheetNo].cssRules[currentIndex].style.setProperty(key, newValue);
+                        updatedRules.push([currentIndex, -1, currentStyle, typeNo]);
                     }
                     break;
             }
@@ -544,20 +527,19 @@ class eTemplate {
         let toAddLen = toAdd.length;
         for (let i = 0; i < toAddLen; i++) {
             let [addType, rule1, rule2, style1, prop, value = ""] = toAdd[i];
-
-            if (addType == "style") {
-                if (rule2 == -1) {
-                    document.styleSheets[sheetNo].cssRules[rule1].style.setProperty(prop, value);
-                } else {
-                    document.styleSheets[sheetNo].cssRules[rule1].cssRules[rule2].style.setProperty(prop, value);
-                }
-            } else {
-                if (rule2 == -1) {
-                    document.styleSheets[sheetNo].insertRule(prop, rule1);
-                } else {
+            if (addType != "style") {
+                if (rule2 != -1) {
                     document.styleSheets[sheetNo].cssRules[rule1].insertRule(prop, rule2);
+                    continue;
                 }
+                document.styleSheets[sheetNo].insertRule(prop, rule1);
+                continue;                
             }
+            if (rule2 != -1) {
+                document.styleSheets[sheetNo].cssRules[rule1].cssRules[rule2].style.setProperty(prop, value);
+                continue;
+            }
+            document.styleSheets[sheetNo].cssRules[rule1].style.setProperty(prop, value);
         }
         // stores changed rules to this.cssRules
         this.cssRules = JSON.parse(JSON.stringify(cssRules));
@@ -623,12 +605,8 @@ class eTemplate {
         insertedHTMLs.forEach((insertedHTML, i) => {
             codeList[orders[i]] = insertedHTML;
         });
-        // new HTML with included HTML
         fileIncludedHTML = this.removeComment(codeList.join(""));
-        ({ urls, orders, codeList } = this.findInclude(fileIncludedHTML, relativeUrls));
-        if (urls.length == 0) return { fileIncludedHTML, codeList };
-        ({ fileIncludedHTML, codeList } = await this.insertNestedHTML(fileIncludedHTML, relativeUrls));
-        return { fileIncludedHTML, codeList };
+        return await this.insertNestedHTML(fileIncludedHTML, relativeUrls);
     }
 
     /**
@@ -748,117 +726,53 @@ class eTemplate {
         return htmlBlock;
     }
 
-    interpretPart(oType, oCode, eClass) {
+    interpretPart(types, codes) {
         // declare variables
         let htmlBlock = [];
-        let tempStr = "";
-        let nType = [];
-        let nCode = [];
-        let tag = '';
-        let i = 0;
-        let j = 0;
-        let blockNo = 0;
-        let cnt = 0;
-        let escapedOpenComment = this.escapeHtml(this.commentDelimiter.replace(this.commentDelimiter, this.openDelimiter));
-        let escapedCloseComment = this.escapeHtml(this.closeDelimiter);
-        const lastAttrRegex = /(-|[a-z])+ *= *["']/g;
+        let cnt = -1;
+        let lastSync = -1;
+        for (let i=0; i<codes.length; i++) {
+            let code = codes[i];
+            let type = types[i];
+            let currentSync = this.htmlSync[i];
+            if (currentSync != lastSync && type=="JS") {
+                cnt++;
+                lastSync = currentSync;
+            }
+            if (type=="HTML") continue;
+            let isBasic = (code.search(/=|-/g) == 0);
 
-        let oCodeLen = oCode.length;
-        for (i = 0; i < oCodeLen; i++) {
-            if (oType[i] == "HTML") {
-                // search code to include eClass
-                j = 0;
-                tempStr = "";
-                tag = this.removeControlText(oCode[i]).split("<").pop();
-                if (tag.includes("class=") && tag.includes(eClass)) tempStr = tag.substring(0, tag.indexOf(" ")).trim();
-                // if found a tag to update 
-                if (tempStr.length > 0) {
-                    blockNo = this.htmlSync[i + 1];
-                    for (j = i + 1; j < oCode.length; j++) {
-                        if (this.htmlSync[j] == blockNo) {
-                            nType.push(oType[j]);
-                            nCode.push(oCode[j]);
-                        } else {
-                            break;
-                        }
+            if (isBasic) {
+                if (this.templateInClass[cnt]==undefined) {
+                    // single line script
+                    try {
+                        htmlBlock.push(this.basicCode(code));
+                    } catch (error) {
+                        htmlBlock.push("invalid template script");
                     }
+                    continue;
                 }
+                // template in attributes
+                try {
+                    if (this.htmlSync[i]!=this.htmlSync[i-1]) {
+                        htmlBlock.push([this.basicCode(code)]);
+                    } else {
+                        htmlBlock[htmlBlock.length - 1].push(this.basicCode(code));                        
+                    }
+                } catch (error) {
+                    htmlBlock.push("invalid template script");
+                }
+                continue;
+            }
+            // multi line script block
+            let block_data = this.eachBlock(types, codes, i);
+            i = block_data.index; // to next block
+            try {
+                htmlBlock.push(this.controlCode(block_data.partBlock));
+            } catch (error) {
+                htmlBlock.push("invalid template script");
             }
         }
-        let nCodeLen = nCode.length;
-        let attrFlag = 0;
-        while (cnt < nCodeLen) {
-            switch (nType[cnt]) {
-                // HTML, as it is
-                case "HTML":
-                    if (nCode[cnt].match(lastAttrRegex)==null) {
-                        htmlBlock.push(
-                            nCode[cnt]
-                                .replaceAll(this.commentDelimiter, escapedOpenComment)
-                                .replaceAll(this.closeDelimiter, escapedCloseComment)
-                        );
-                    } else {
-                        attrFlag = 1;
-                    }
-                    break;
-                // JS
-                case "JS":
-                    if (attrFlag == 0) {
-                        // no template in attributes
-                        if (nCode[cnt].search(/=|-/g) == 0) {
-                            // single line script
-                            try {
-                                htmlBlock.push(this.basicCode(nCode[cnt]));
-                            } catch (error) {
-                                htmlBlock.push("invalid template script");
-                            }
-                            break;
-                        } else {
-                            // multi line script block
-                            let block_data = this.eachBlock(nType, nCode, cnt);
-                            cnt = block_data.index; // to next block
-                            try {
-                                htmlBlock.push(this.controlCode(block_data.partBlock));
-                            } catch (error) {
-                                htmlBlock.push("invalid template script");
-                            }
-                            break;
-                        }
-                    } else {
-                        // template in attributes
-                        if (nCode[cnt].search(/=|-/g) == 0) {
-                            // single line script
-                            try {
-                                if (Array.isArray(htmlBlock[htmlBlock.length - 1])) {
-                                    htmlBlock[htmlBlock.length - 1].push(this.basicCode(nCode[cnt]));
-                                } else {
-                                    htmlBlock[htmlBlock.length - 1] = [
-                                        htmlBlock[htmlBlock.length - 1],
-                                        this.basicCode(nCode[cnt]),
-                                    ];
-                                }
-                            } catch (error) {
-                                htmlBlock.push("invalid template script");
-                            }
-                            attrFlag = 0;
-                            break;
-                        } else {
-                            // multi line script block
-                            let block_data = this.eachBlock(nType, nCode, cnt);
-                            cnt = block_data.index; // to next block
-                            try {
-                                htmlBlock.push(this.controlCode(block_data.partBlock));
-                            } catch (error) {
-                                htmlBlock.push("invalid template script");
-                            }
-                            attrFlag = 0;
-                            break;
-                        }
-                    }
-            } // switch:end
-            cnt++;
-        } // for:while
-
         return htmlBlock;
     }
 
@@ -881,8 +795,9 @@ class eTemplate {
                         break;
                     } else {
                         // multi line script block
-                        index = this.findBlockEnd(type, code, i).index;
-                        braceBalance = this.findBlockEnd(type, code, i).braceBalance;
+                        let blockEnd = this.findBlockEnd(type, code, i);
+                        index = blockEnd.index;
+                        braceBalance = blockEnd.braceBalance;
                         if (braceBalance < 0) {
                             console.log("ERROR: missing {");
                         } else if (braceBalance > 0) {
@@ -911,7 +826,7 @@ class eTemplate {
                 if (bracesCnt == 0) return { index: j, error: 0 };
                 continue;
             }
-            // additional blocks
+            // from the other blocks
             // HTML
             if (type[j] == "HTML") continue;
             // JS
@@ -939,16 +854,16 @@ class eTemplate {
                     if (code[j].includes("{")) bracesCnt++;
                     if (code[j].includes("}")) bracesCnt--;
                     if (bracesCnt == 0) return { partBlock: code[j], index: j };
-                    partBlock = `let eTemplateInterpreted=''; ${code[j]}`;
+                    partBlock = `let eTemplateInterpreted=${String.fromCharCode(96)}${String.fromCharCode(96)}; ${code[j]}`;
                     continue;
                 } else {
-                    partBlock = `let eTemplateInterpreted='${code[j]}';`;
+                    partBlock = `let eTemplateInterpreted=${String.fromCharCode(96)}${code[j]}${String.fromCharCode(96)};`;
                 }
             }
             // additional blocks
             switch (type[j]) {
                 case "HTML":
-                    if (this.removeControlText(code[j]).trim() !== "") partBlock += `eTemplateInterpreted += '${code[j]}';`;
+                    if (this.removeControlText(code[j]).trim() !== "") partBlock += `eTemplateInterpreted += ${String.fromCharCode(96)}${code[j]}${String.fromCharCode(96)};`;
                     continue;
                 case "JS":
                     if (code[j].search(/=|-/g) == 0) {
@@ -984,172 +899,155 @@ class eTemplate {
         let syncCnt = this.syncCnt;
         let syncLen = sync.length;
         const eClass = this.syncClass;
-        const attrRegex = /[\s]+((-|[a-z])+) *= *["']/g;
+        const attrRegex = /[\s]+((-|\w)+) *= *["']/g;
         const beforeClassRegex = /[\s\S]+class[\s]*= *["']/g;
 
         for (let i = 0; i < syncLen; i++) {
+
             if (type[i]=="JS") code[i] = code[i].trim();
-            if (sync[i] != lastSync && type[i] == "JS") {
+            if (sync[i] == lastSync || type[i] != "JS") {
                 lastSync = sync[i];
-                classStart = 0;
-                startBlockIndex = i;
-                endBlockIndex = sync.lastIndexOf(sync[startBlockIndex]);
-                prevCode = code[i - 1];
-                attrList = [];
-                let cleanPrevCode = this.removeControlText(prevCode);
-                let endBlank = cleanPrevCode.length - cleanPrevCode.trimEnd().length;
-                let lastLetter = cleanPrevCode.substring(cleanPrevCode.length - endBlank - 1).trim();
-
-                if (lastLetter != ">") {
-                    // previous HTML is not ended width tag
-                    endPos = prevCode.lastIndexOf(">");
-                    startPos = prevCode.lastIndexOf("<");
-                    // Check template in the middle of prev and next code, which means template is used in attributes
-                    if (endPos < startPos) { // if in the middle
-                        // find the block end of tag
-                        for (let j = i + 1; j < syncLen; j++) {
-                            if (type[j] === "HTML" && code[j].indexOf(">") > 0) {
-                                for (let k = i + 1; k < j; k++) { sync[k] = sync[i]; }
-                                endBlockIndex = sync.lastIndexOf(sync[i]);
-                                break;
-                            }
-                        }
-                        // find the attributes
-                        let classPos = -1;
-                        for (let j= i-1; j <= endBlockIndex; j++) {
-                            if (type[j] === "HTML" && code[j].match(attrRegex)!==null && type[j + 1] == "JS") {
-                                let attrL=[...code[j].matchAll(attrRegex)];
-                                attrList.push(attrL[attrL.length-1][1]);                                 
-                                if (attrList[attrList.length-1] === "class") classPos=j;
-                            }
-                        }
-
-                        for (let j= i-1; j <= endBlockIndex; j++) {
-                            if (type[j] === "HTML" && code[j].match(attrRegex)!==null && type[j + 1] == "JS") {
-                                let classIndex = code[j].lastIndexOf('class');
-                                if (classIndex > startPos) { classPos = j; }
-                            }
-                        }
-
-                        // if class is not the first attribute, change orders
-                        if (classPos!==(i-1) && attrList.includes("class")) {
-                            // change order of attr list
-                            let classOrderInAttrList = attrList.indexOf('class');
-                            tempStr = attrList[0];
-                            attrList[0] = 'class';
-                            attrList[classOrderInAttrList] = tempStr;
-                            // change order of attributes
-                            let aJS = code[i];
-                            let aTagStartPos = code[i-1].lastIndexOf(attrList[classOrderInAttrList]);
-                            let aTagEndPos = code[i+1].indexOf(`"`);
-                            let a1start = code[i-1].substring(0, aTagStartPos);
-                            let a1end = code[i-1].substring(aTagStartPos);
-                            let a2start = code[i+1].substring(0,aTagEndPos+1);
-                            let a2end = code[i+1].substring(aTagEndPos+1);
-                            let bJS = code[classPos+1];
-                            let bTagStartPos = code[classPos].lastIndexOf('class');
-                            let bTagEndPos = code[classPos+2].indexOf(`"`);
-                            let b1start = code[classPos].substring(0, bTagStartPos);
-                            let b1end = code[classPos].substring(bTagStartPos);
-                            let b2start = code[classPos+2].substring(0,bTagEndPos+1);
-                            let b2end = code[classPos+2].substring(bTagEndPos+1);
-
-                            code[i] = bJS;
-                            code[classPos+1] = aJS;
-                            if (i+1 == classPos) {
-                                code[i-1] = a1start + b1end;
-                                code[i+1] = b2start + a1end;
-                                code[classPos+2] = a2start + b2end;
-                            } else {
-                                code[i-1] = a1start + b1end;
-                                code[i+1] = b2start + a2end;
-                                code[classPos] = b1start + a1end;
-                                code[classPos+2] = a2start + b2end;
-                            }
-                            classPos=i-1;
-                        }
-
-                        let attrText = attrList.join("+");
-                        let interpretedTemplate = [];
-                        for (let j=i; j<=endBlockIndex; j++) {
-                            if (type[j] == "JS") interpretedTemplate.push(this.basicCode(code[j].substring(1)));
-                        }
-                        this.templateInClass[syncCnt]=interpretedTemplate;
-                        
-                        if (classPos===-1) {
-                            // there is no class in the block
-                            startPos = prevCode.lastIndexOf("<");
-                            endPos = prevCode.indexOf(" ", startPos);
-                            code[i - 1] = `${prevCode.substring(0,endPos + 1)} class="${eClass} ${eClass}_${attrText} ${eClass}Cnt${syncCnt}" ${prevCode.substring(endPos + 1)}`;
-                            syncCnt++;                            
-                        } else {
-                            // there is a class in the block
-                            let beforeClass = code[classPos].match(beforeClassRegex)[0];
-                            let afterClass = code[classPos].replace(beforeClass,'');
-                            code[classPos] = `${beforeClass}${eClass} ${eClass}_${attrText} ${eClass}Cnt${syncCnt} ${afterClass}`;
-                            syncCnt++;
-                        }
-                    } else {
-                        // not in the middle and there is text elements before this template
-                        code[i - 1] += `<span class="${eClass} ${eClass}Cnt${syncCnt}">`;
-                        syncCnt++;
-                        code[endBlockIndex + 1] = "</span>" + code[endBlockIndex + 1];
-                    }
-                } else {
-                    // previous HTML is ended width tag
-                    startPos = prevCode.lastIndexOf("<");
-                    endPos = prevCode.lastIndexOf(">");
-                    spacePos = prevCode.indexOf(" ", startPos);
-                    if (spacePos == -1 || spacePos > endPos) {
-                        tagStr = prevCode.substring(startPos + 1, endPos);
-                    } else {
-                        tagStr = prevCode.substring(startPos + 1, prevCode.length).split(" ")[0];
-                    }
-
-                    if (prevCode.substring(startPos, startPos + 2) != "</") {
-                        //  if previous code is not ended with end tag
-                        if (code[endBlockIndex + 1].includes("</" + tagStr) && 
-                            code[endBlockIndex + 1].indexOf("</" + tagStr) <
-                            (code[endBlockIndex + 1].indexOf("<" + tagStr) == -1
-                                ? code[endBlockIndex + 1].length
-                                : code[endBlockIndex + 1].indexOf("<" + tagStr))) {
-                            if (this.removeControlText(code[endBlockIndex + 1]).trim().indexOf("</" + tagStr) == 0) {
-                                // end tag is at the first in the next code
-                                endPos = prevCode.length;
-                                startPos = prevCode.lastIndexOf("<");
-                                tempStr = prevCode.substring(startPos, endPos);
-                                if (tempStr.includes("class=")) {
-                                    classStart = prevCode.indexOf("class=", startPos) + 7;
-                                    code[i - 1] = `${prevCode.substring(0,classStart)}${eClass} ${eClass}Cnt${syncCnt} ${prevCode.substring(classStart)}`;
-                                    syncCnt++;
-                                } else {
-                                    endPos = prevCode.lastIndexOf(">");
-                                    code[i - 1] = `${prevCode.substring(0,endPos)} class="${eClass} ${eClass}Cnt${syncCnt}" ${prevCode.substring(endPos,prevCode.length)}`;
-                                    syncCnt++;
-                                }
-                            } else {
-                                // end tag is in the middle in the next code, which means there is text before the end tag
-                                startPos = 0;
-                                endPos = code[endBlockIndex + 1].indexOf("</");
-                                code[i - 1] = `${code[i - 1]}<span class="${eClass} ${eClass}Cnt${syncCnt}">`;
-                                syncCnt++;
-                                code[endBlockIndex + 1] = `</span>${code[endBlockIndex + 1]}`;
-                            }
-                        } else {
-                            // no tag in the next
-                            code[i - 1] = `${code[i - 1]}<span class="${eClass} ${eClass}Cnt${syncCnt}">`;
-                            syncCnt++;
-                            code[endBlockIndex + 1] = `</span>${code[endBlockIndex + 1]}`;
-                        }
-                    } else {
-                        code[i - 1] = `${code[i - 1]}<span class="${eClass} ${eClass}Cnt${syncCnt}">`;
-                        syncCnt++;
-                        code[endBlockIndex + 1] = `</span>${code[endBlockIndex + 1]}`;
-                    }
-                }
-            } else {
-                lastSync = sync[i];
+                continue;
             }
+
+            lastSync = sync[i];
+            classStart = 0;
+            startBlockIndex = i;
+            endBlockIndex = sync.lastIndexOf(sync[startBlockIndex]);
+            prevCode = code[i - 1];
+            attrList = [];
+            let cleanPrevCode = this.removeControlText(prevCode);
+            let endBlank = cleanPrevCode.length - cleanPrevCode.trimEnd().length;
+            let lastLetter = cleanPrevCode.substring(cleanPrevCode.length - endBlank - 1).trim();
+
+            if (lastLetter != ">") {
+                // previous HTML is not ended with tag
+                endPos = prevCode.lastIndexOf(">");
+                startPos = prevCode.lastIndexOf("<");
+
+                // Check template in the middle of prev and next code, which means template is used in attributes
+                if (endPos < startPos) { // if in the middle
+                    // find the block end of tag
+                    let tag = prevCode.substring(startPos+1, prevCode.indexOf(" ", startPos));
+                    for (let j = i + 1; j < syncLen; j++) {
+                        if (type[j] === "HTML" && code[j].indexOf(`>`) > 0) {
+                            // adjust sync to the same within the tag
+                            for (let k = i + 1; k < j; k++) { sync[k] = sync[i]; }
+                            endBlockIndex = sync.lastIndexOf(sync[i]);
+                            break;
+                        }
+                    }
+                    // find the attributes
+                    let classPos = -1;
+                    let currentAttr = '';
+                    for (let j= i; j <= endBlockIndex; j++) {
+                        if (type[j] === "JS") {
+                            for (let k=j-1; k>=0; k--) {
+                                let attrL=[...code[k].matchAll(attrRegex)];
+                                if (attrL.length>0) {
+                                    currentAttr = attrL[attrL.length-1][1];
+                                    if (currentAttr == "class") classPos = k;
+                                    break;
+                                }
+                            }
+                            if (currentAttr !='') attrList.push(currentAttr);
+                        }
+                    }
+
+                    let attrText = [... new Set(attrList)].join("+");
+                    let interpretedTemplate = [];
+                    for (let j=i; j<=endBlockIndex; j++) {
+                        if (type[j] == "JS") interpretedTemplate.push(this.basicCode(code[j].substring(1)));
+                    }
+
+                    if (attrList.length>0) {
+                        this.templateInClass[syncCnt] = [];
+                        attrList.map((attr, j) => {
+                            this.templateInClass[syncCnt].push([attr, interpretedTemplate[j]]);
+                        });
+                    }
+                    
+                    if (classPos===-1) {
+                        // there is no class in the block
+                        startPos = prevCode.lastIndexOf("<");
+                        endPos = prevCode.indexOf(" ", startPos);
+                        code[i - 1] = `${prevCode.substring(0,endPos + 1)} class="${eClass} ${eClass}_${attrText} ${eClass}Cnt${syncCnt}" ${prevCode.substring(endPos + 1)}`;
+                        syncCnt++;                            
+                    } else {
+                        // there is a class in the block
+                        let beforeClass = code[classPos].match(beforeClassRegex)[0];
+                        let afterClass = code[classPos].replace(beforeClass,'');
+                        code[classPos] = `${beforeClass}${eClass} ${eClass}_${attrText} ${eClass}Cnt${syncCnt} ${afterClass}`;
+                        syncCnt++;
+                    }
+                    continue;
+                }
+
+                // not in the middle and there is text elements before this template
+                code[i - 1] += `<span class="${eClass} ${eClass}Cnt${syncCnt}">`;
+                syncCnt++;
+                code[endBlockIndex + 1] = "</span>" + code[endBlockIndex + 1];
+                continue;
+            } 
+
+        // previous code is ended with tag -- start
+            startPos = prevCode.lastIndexOf("<");
+            endPos = prevCode.lastIndexOf(">");
+            spacePos = prevCode.indexOf(" ", startPos);
+            tagStr = (spacePos == -1 || spacePos > endPos) ?
+                        prevCode.substring(startPos + 1, endPos) :
+                        prevCode.substring(startPos + 1, prevCode.length).split(" ")[0];
+
+            // if previous code is ended with end tag
+            if (prevCode.substring(startPos, startPos + 2) == "</") {
+                code[i - 1] = `${code[i - 1]}<span class="${eClass} ${eClass}Cnt${syncCnt}">`;
+                syncCnt++;
+                code[endBlockIndex + 1] = `</span>${code[endBlockIndex + 1]}`;
+                continue;
+            }
+
+            //  if previous code is ended with start tag
+            if (code[endBlockIndex + 1].includes("</" + tagStr) && 
+                code[endBlockIndex + 1].indexOf("</" + tagStr) <
+                (code[endBlockIndex + 1].indexOf("<" + tagStr) == -1
+                    ? code[endBlockIndex + 1].length
+                    : code[endBlockIndex + 1].indexOf("<" + tagStr))) {
+
+                // if next code has end tag
+                if (this.removeControlText(code[endBlockIndex + 1]).trim().indexOf("</" + tagStr) == 0) {
+                    // end tag is at the first in the next code
+                    endPos = prevCode.length;
+                    startPos = prevCode.lastIndexOf("<");
+                    tempStr = prevCode.substring(startPos, endPos);
+                    // check there is a class in previous code
+                    if (tempStr.includes("class=")) {
+                        classStart = prevCode.indexOf("class=", startPos) + 7;
+                        code[i - 1] = `${prevCode.substring(0,classStart)}${eClass} ${eClass}Cnt${syncCnt} ${prevCode.substring(classStart)}`;
+                        syncCnt++;
+                        continue;
+                    }
+                    // if there is no class in previous code
+                    endPos = prevCode.lastIndexOf(">");
+                    code[i - 1] = `${prevCode.substring(0,endPos)} class="${eClass} ${eClass}Cnt${syncCnt}" ${prevCode.substring(endPos,prevCode.length)}`;
+                    syncCnt++;
+                    continue;
+                } 
+                // end tag is in the middle in the next code, which means there is text before the end tag
+                startPos = 0;
+                endPos = code[endBlockIndex + 1].indexOf("</");
+                code[i - 1] = `${code[i - 1]}<span class="${eClass} ${eClass}Cnt${syncCnt}">`;
+                syncCnt++;
+                code[endBlockIndex + 1] = `</span>${code[endBlockIndex + 1]}`;
+                continue;
+            }
+
+            // no tag in the next
+            code[i - 1] = `${code[i - 1]}<span class="${eClass} ${eClass}Cnt${syncCnt}">`;
+            syncCnt++;
+            code[endBlockIndex + 1] = `</span>${code[endBlockIndex + 1]}`;
+        // previous code is ended with tag -- end
+            
+
         }
         return { type: type, code: code, syncCnt };
     }
@@ -1167,7 +1065,7 @@ class eTemplate {
         const templateRegex = new RegExp(regexText, "g");
         let titleCode = null;
         let titleResult = "";
-        let flag = 0;
+        let flag = false;
         // interpret template of title
         if (templateTitle.trim().match(templateRegex) != null) {
             titleCode = templateTitle
@@ -1175,13 +1073,53 @@ class eTemplate {
                 .match(templateRegex)[0]
                 .replaceAll(`${this.openDelimiter}`, "")
                 .replaceAll(`${this.closeDelimiter}`, "");
-            flag = 1;
+            flag = true;
         } else {
             titleResult = templateTitle;
         }
 
         if (flag) titleResult = this.basicCode(titleCode);
         if (document.querySelector("title")) document.querySelector("title").innerHTML = titleResult;
+    }
+
+    readMeta(currentHTML) {
+        const doc = document.createElement('document');
+        doc.insertAdjacentHTML('beforeend', currentHTML);
+        const metaTags = doc.querySelectorAll('meta');
+        let metaArr = [];
+        metaTags.forEach((metaTag, i) => {
+            for(let j=0; j<metaTag.attributes.length; j++) {
+                if (metaTag.attributes[j].value.indexOf(this.openDelimiter)>-1) {
+                    metaArr.push({
+                        metaNo: i,
+                        attributeNo: j,
+                        nodeName: metaTag.attributes[j].name,
+                        nodeValue: metaTag.attributes[j].value
+                    });
+                }
+            }
+        });
+        this.metaArray = JSON.parse(JSON.stringify(metaArr));
+        return;
+    }
+
+    changeMeta() {
+        if (this.metaArray.length==0) return;
+        const regexText = `(${this.openDelimiter}[^%][\\s\\S]*?${this.closeDelimiter})`;
+        const templateRegex = new RegExp(regexText, "g");
+        let metaEls = document.querySelectorAll('meta');
+        this.metaArray.forEach(meta => {
+            let tempArr = meta.nodeValue.split(templateRegex);
+            let isTemplateIn = false;
+            for(let j=0; j<tempArr.length; j++) {
+                if (tempArr[j].indexOf(this.openDelimiter)==-1) continue;
+                let tempStr = tempArr[j].replace(this.openDelimiter, '').replace(this.closeDelimiter, '').trim();
+                let tempResult = this.basicCode(tempStr.substring(1));
+                tempArr[j] = tempResult;
+                isTemplateIn = true;
+            }
+            if (isTemplateIn) metaEls[meta.metaNo].attributes[meta.attributeNo].nodeValue = tempArr.join('');
+        });
     }
 
     removeComment(html) {
@@ -1276,26 +1214,24 @@ class eTemplate {
             linkTags.push(match);
             return "";
         });
-
         let relUrl = this.currentUrl().host;
         linkTags.forEach((linkTag) => {
             let linkHref = getHref(linkTag);
             if (linkHref.indexOf("http")<0) urls.push(new URL(linkHref, relUrl).href);
         });
-
+        urls = urls.map(url => this.removeControlText(url));
         // read and combine css files
         let importedStyles = await this.getTextFromFiles(urls);
         let relativeUrls = [];
         urls.forEach(url => {
             relativeUrls.push(this.getComparedPath(url, this.currentUrl().host));
         });
-
         for (let i=0; i<importedStyles.length; i++) {
             importedStyles[i] = this.replaceRelativeUrl(importedStyles[i], relativeUrls[i]);
         }
-        combinedStyle = importedStyles.reduce((acc, style) => {
-            return acc + style;
-        }, combinedStyle);
+        
+        combinedStyle = importedStyles.reduce((acc, style) => acc + style, combinedStyle);
+
         combinedStyle = await this.insertNestedCSS(combinedStyle);
         return combinedStyle;
     }
@@ -1346,9 +1282,7 @@ class eTemplate {
 
         for (let i=0; i<stdUrl.length; i++) {
             if (stdUrl[i] !== arrUrl[i]) {
-                if (stdUrl[i] !== '') {
-                    added.push("..");
-                }
+                if (stdUrl[i] !== '') added.push("..");
             } else {
                 arrUrl[i] = ".";
             }
@@ -1361,9 +1295,11 @@ class eTemplate {
         const urlRegex = /(@import *['"])(.*?)(['"])|(url\(['"]?)(.*?)(['"]?\))/g;
         function replacer (match, p1, p2, p3, p4, p5, p6) {
             if (p1 == undefined) {
+                if (p5.indexOf('http')>-1) return p4+p5+p6;
                 p5 = compareUrls(p5, relativeUrl);
                 return p4+p5+p6;
             } else {
+                if (p2.indexOf('http')>-1) return p1+p2+p3;
                 p2 = compareUrls(p2, relativeUrl); 
                 return p1+p2+p3;
             }
@@ -1419,35 +1355,27 @@ class eTemplate {
         let finalCSS = "";
         // get urls of css to import, where to insert, seperated css array
         let { urls, orders, codes, media } = this.findImport(styleText);
-        if (urls.length == 0) {
-            // if there is no @import at all
-            finalCSS = codes.join("");
-            return finalCSS;
-        }
+        finalCSS = codes.join("");
+        // if there is no @import at all
+        if (urls.length == 0) return finalCSS;
+        // read nested CSS files
         let insertedCSSs = await this.getTextFromFiles(urls);
         let relativeUrls = [];
+        // adjust relative addresses in nested CSS files to an address of integrated style 
         urls.forEach(url => {
             relativeUrls.push(this.getComparedPath(url, this.currentUrl().host));
         })
         for (let i=0; i<insertedCSSs.length; i++) {
             insertedCSSs[i] = this.replaceRelativeUrl(insertedCSSs[i], relativeUrls[i]);
         }
-        // insert CSS of files into each @import
+        // insert CSS of files into each places of @import
         insertedCSSs.forEach((insertedCSS, i) => {
             codes[orders[i]] = (media[i] !== "") ? this.insertMedia(insertedCSS, media[i]) : insertedCSS;
         });
-        // new CSS with imported CSS
+        // new CSS with nested CSS
         finalCSS = codes.join("");
-        // find further nested @import
-        ({ urls, orders, codes, media } = this.findImport(finalCSS));
-        if (urls.length != 0) {
-            // recursively insert css from imported css files
-            finalCSS = await this.insertNestedCSS(finalCSS);
-            return finalCSS;
-        } else {
-            // if there is no more @import...
-            return finalCSS;
-        }
+        // recursively find further nested CSS
+        return await this.insertNestedCSS(finalCSS);
     }
 
     insertMedia(code, media) {
@@ -1641,12 +1569,14 @@ class eTemplate {
         try {
             return Function(`"use strict"; return ( ${script.substring(1)} )`)();
         } catch (e) {
+            console.log(script);
             console.error(e);
             return `invalid template`;
         }
     }
 
     controlCode(script) {
+        script = this.removeControlText(script);
         try {
             return Function(`"use strict"; ${script.replace(/[\n\r\t]/g, "")}`)();
         } catch (e) {
@@ -1667,8 +1597,7 @@ class eTemplate {
     }
 
     async getTextFromFiles(urls) {
-        if (urls.length == 0)
-            return [];
+        if (urls.length == 0) return [];
         let requests = urls.map((url) => fetch(url));
         let responses = await Promise.allSettled(requests);
         let errorNo = [];
