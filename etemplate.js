@@ -929,10 +929,13 @@ class eTemplate {
                 if (endPos < startPos) { // if in the middle
                     // find the block end of tag
                     let tag = prevCode.substring(startPos+1, prevCode.indexOf(" ", startPos));
+
                     for (let j = i + 1; j < syncLen; j++) {
                         if (type[j] === "HTML" && code[j].indexOf(`>`) > 0) {
                             // adjust sync to the same within the tag
-                            for (let k = i + 1; k < j; k++) { sync[k] = sync[i]; }
+                            for (let k = i + 1; k < j; k++) { 
+                                sync[k] = sync[i];
+                            }
                             endBlockIndex = sync.lastIndexOf(sync[i]);
                             break;
                         }
@@ -940,6 +943,7 @@ class eTemplate {
                     // find the attributes
                     let classPos = -1;
                     let currentAttr = '';
+
                     for (let j= i; j <= endBlockIndex; j++) {
                         if (type[j] === "JS") {
                             for (let k=j-1; k>=0; k--) {
@@ -951,6 +955,14 @@ class eTemplate {
                                 }
                             }
                             if (currentAttr !='') attrList.push(currentAttr);
+                        }
+                    }
+
+                    for (let j= i-1; j <= endBlockIndex+1; j++) {
+                        if (type[j] === "HTML" && code[j].match(attrRegex)!==null && type[j + 1] == "JS") {
+                            let classIndex = code[j].lastIndexOf('class');
+                            if ((j==i-1) && (classIndex > startPos)) { classPos = j; break; }
+                            if (j>i && classIndex < code[j].indexOf('>')) { classPos = j; break; }
                         }
                     }
 
