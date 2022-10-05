@@ -1260,7 +1260,7 @@ class eTemplate {
         let relUrl = this.currentUrl().host;
         linkTags.forEach((linkTag) => {
             let linkHref = getHref(linkTag);
-            if (linkHref.indexOf("http")<0 && linkHref.indexOf("base64,"<0)) urls.push(new URL(linkHref, relUrl).href);
+            if (linkHref.indexOf("http")<0) urls.push(new URL(linkHref, relUrl).href);
         });
         urls = urls.map(url => this.removeControlText(url));
         // read and combine css files
@@ -1275,7 +1275,7 @@ class eTemplate {
             importedStyles[i] = this.replaceRelativeUrl(importedStyles[i], relativeUrls[i]);
         }
 
-        combinedStyle = importedStyles.join('');
+        combinedStyle = combinedStyle + importedStyles.join('');
         combinedStyle = await this.insertNestedCSS(combinedStyle);
         return combinedStyle;
     }
@@ -1617,9 +1617,8 @@ class eTemplate {
     }
 
     basicCode(script) {
-        try {
-            return Function(`"use strict"; return ( ${script.substring(1)} )`)();
-        } catch (e) {
+        try { return Function(`"use strict"; return ( ${script.substring(1)} )`)(); }
+        catch (e) {
             console.log(script);
             console.error(e);
             return `invalid template`;
@@ -1628,9 +1627,8 @@ class eTemplate {
 
     controlCode(script) {
         script = this.removeControlText(script);
-        try {
-            return Function(`"use strict"; ${script.replace(/[\n\r\t]/g, "")}`)();
-        } catch (e) {
+        try { return Function(`"use strict"; ${script.replace(/[\n\r\t]/g, "")}`)(); }
+        catch (e) {
             console.error(e);
             return `invalid template block`;
         }
@@ -1642,8 +1640,7 @@ class eTemplate {
         fullUrl = fullUrl.replace(urlHash, "");
         let fileName = fullUrl.split("/").pop();
         let host = fullUrl.substring(0, fullUrl.length - fileName.length); // host + path (without filename)
-        if (urlHash != "")
-            fileName = urlHash.substring(1) + ".html";
+        if (urlHash != "") fileName = urlHash.substring(1) + ".html";
         return { host: host, filename: fileName };
     }
 
@@ -1671,8 +1668,7 @@ class eTemplate {
     }
 
     parseCSS(cssText) {
-        if (cssText === undefined)
-            return [];
+        if (cssText === undefined) return [];
         let commentRegex = /\/\*.*?\*\//g;
         let importsRegex = /@import .*?\(.*?\);/g;
         let keyframesRegex = /((@keyframes[\s\S]*?){([\s\S]*?}\s*?)})/g;
@@ -1738,10 +1734,12 @@ class eTemplate {
         for (let i = 0; i < rulesLength; i++) {
             let rule = rules[i];
             rule = rule.trim();
+            // add splitted base64 code due to semi-colon just after "url('data:datatype/extension"
             if (!rule.includes(":") && rule.trim().substring(0, 7) === "base64,") {
                 parsedArr[parsedArr.length - 1].value += rule.trim();
                 continue;
             }
+            // otherwise, it goes normal
             if (rule.includes(":")) {
                 rule = rule.split(":");
                 let cssKey = rule[0].trim();
@@ -1763,8 +1761,7 @@ class eTemplate {
         for (let i = 0; i < arrLen; i++) {
             hash[arr1[i]] = i;
         }
-        if (hash.hasOwnProperty(arr2))
-            return hash[arr2];
+        if (hash.hasOwnProperty(arr2)) return hash[arr2];
         return -1;
     }
 

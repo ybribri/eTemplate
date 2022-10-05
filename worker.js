@@ -212,9 +212,7 @@ class myWorker {
         for (let i=0; i<importedStyles.length; i++) {
             importedStyles[i] = this.replaceRelativeUrl(importedStyles[i], relativeUrls[i]);
         }
-        combinedStyle = importedStyles.reduce((acc, style) => {
-            return acc + style;
-        }, combinedStyle);
+        combinedStyle = combinedStyle + importedStyles.join('');
         combinedStyle = await this.insertNestedCSS(combinedStyle);
         return combinedStyle;
     }
