@@ -280,11 +280,9 @@ class myWorker {
         const urlRegex = /(@import *['"])(.*?)(['"])|(url\(['"]?)(.*?)(['"]?\))/g;
         function replacer (match, p1, p2, p3, p4, p5, p6) {
             if (p1 == undefined) {
-                if (p5.indexOf('http')>-1) return p4+p5+p6;                
                 p5 = compareUrls(p5, relativeUrl);
                 return p4+p5+p6;
             } else {
-                if (p2.indexOf('http')>-1) return p1+p2+p3;                
                 p2 = compareUrls(p2, relativeUrl); 
                 return p1+p2+p3;
             }
@@ -301,6 +299,7 @@ class myWorker {
                 return baseUrl+oldUrl.substring(3);
             }
         }
+        if (style.includes('base64,') || style.includes('http')) return style;
         let newStyle = style.replace(urlRegex, replacer);
         return newStyle;
     } 

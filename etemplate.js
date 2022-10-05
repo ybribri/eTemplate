@@ -17,7 +17,6 @@
  * @param {string} syncClass class name to update
  * @param {string} startUrl if syncUrl is not defined for render(), startUrl can be loaded.
  */
-
 class eTemplate {
     constructor({
         openDelimiter = "<%", closeDelimiter = "%>", syncClass = "et_sync", startUrl = "", urlList = []
@@ -37,11 +36,11 @@ class eTemplate {
         this.openDelimiter = openDelimiter; // start tag of template
         this.closeDelimiter = closeDelimiter; // end tag of template
         this.commentDelimiter = openDelimiter + "%"; // start tag of comment template
-        this.preRead = [];
-        this.urlList = urlList;
-        this.fileName = "";
-        this.scripts = [];
-        this.currentHash = "";
+        this.preRead = []; // stored and integrated codes from web workers 
+        this.urlList = urlList; // urls to read in advance while the first page is being loaded
+        this.fileName = ""; // current filename to render
+        this.scripts = []; // temporarily stored scripts
+        this.currentHash = ""; 
     }
 
     /**
@@ -130,6 +129,8 @@ class eTemplate {
 
     /**
      * Spawn web workers of preloading and combining each pages
+     * @method
+     * @async
      * @param {array} urlList list of filenames used in this website
      * @param {string} scope scope to check templates
      * @returns nothing
@@ -148,6 +149,12 @@ class eTemplate {
         return;
     }
 
+    /**
+     * find scripts from HTML text, store temporarily and return script removed HTML text
+     * @method
+     * @param {string} currentHTML scope to check templates
+     * @returns {string} script removed HTML text
+     */
     storeScript(currentHTML) {
         const BODY_REGEX = /<body*?>(\n|\r|\t|.)*/gm;
         const SCRIPT_REGEX = /<script[\s\S]*?>[\s\S]*?<\/script>/gm;
@@ -165,6 +172,7 @@ class eTemplate {
     /**
      * read further nested HTML and process
      * @method
+     * @async
      * @param {string} currentHTML source HTML text which was loaded firstly (not interpreted yet)
      * @param {string} scope scope for interpret. "": CSS and HTML, "body": only HTML
      * @returns {object} htmlBlock: interpreted codes array / codeList: object of code and type
@@ -202,6 +210,13 @@ class eTemplate {
         });
     }
 
+    /**
+     * read further from stored HTML and process
+     * @method
+     * @async
+     * @param {string} currentHTML source HTML text which was loaded firstly (not interpreted yet)
+     * @returns {object} htmlBlock: interpreted codes array / codeList: object of code and type
+     */
     async readFurtherFromCombinedHTML(fileIncludedHTML) {
         // insert nested HTML modules
         let moduleIncludedHTML = this.insertModules(fileIncludedHTML);
@@ -513,7 +528,6 @@ class eTemplate {
                             document.styleSheets[sheetNo].cssRules[i].style.removeProperty(targetProp);
                         }
                     }
-
                     if (document.styleSheets[sheetNo].cssRules[i].style.length == 0) document.styleSheets[sheetNo].deleteRule(i);
                     break;
                 case 7:
@@ -547,8 +561,9 @@ class eTemplate {
 
     /**
      * find <% include %> template in HTML text
+     * @method 
      * @param {string} currentHTML 
-     * @returns {object} urls: urls in include template / order: array of code number pointing where the template is / codeList: seperated HTML codes
+     * @returns {object} urls : urls in include template, order : array of code number pointing where the template is, codeList : seperated HTML codes
      */
     findInclude(currentHTML) {
         const bodyRegexp = /< *?body *?>[\s\S]*?< *?\/ *?body>/g;
@@ -582,8 +597,9 @@ class eTemplate {
 
     /**
      * Insert nested HTML text from external files to source HTML text
+     * @method
      * @param {string} currentHTML HTML text source with nested files
-     * @returns {object} fileIncludedHTML: HTML text with included HTML text / codeList: array of seperated codes
+     * @returns {object} fileIncludedHTML : HTML text with included nested HTML files, codeList: array of seperated codes
      */
     async insertNestedHTML(currentHTML, basePath=[]) {
         let fileIncludedHTML = "";
@@ -611,6 +627,7 @@ class eTemplate {
 
     /**
      * Insert nested HTML text from modules to source HTML text
+     * @method
      * @param {string} currentHTML HTML text with nested modules
      * @returns {string} HTML text inserted with modules
      */
@@ -644,9 +661,10 @@ class eTemplate {
 
     /**
      * Seperate templates or template blocks out of HTML text  
+     * @method
      * @param {string} html HTML text
      * @param {string} calltype "first" seperate templates as they are / "second" seperate only inside of templates delimiters
-     * @returns {object} code: array of seperated codes / type: array of code types
+     * @returns {object.<{code: [array], type: [array]}>} code: array of seperated codes, type: array of code types
      */
     seperateCode(html, calltype) {
         const regexText = `(${this.openDelimiter}[^%][\\s\\S]*?${this.closeDelimiter})`;
@@ -676,6 +694,7 @@ class eTemplate {
 
     /**
      * Interpret each codes and make blocks of interpreted codes 
+     * @method
      * @param {array} type type of codes
      * @param {array} code seperated codes by type
      * @returns {array} htmlblock : array of interpreted codes
@@ -726,6 +745,13 @@ class eTemplate {
         return htmlBlock;
     }
 
+    /**
+     * interpret stored templates for places of templates in HTML
+     * @method
+     * @param {array} types stored types of template codes
+     * @param {array} codes stored template codes  
+     * @returns {array} htmlBlock 
+     */
     interpretPart(types, codes) {
         // declare variables
         let htmlBlock = [];
@@ -776,6 +802,13 @@ class eTemplate {
         return htmlBlock;
     }
 
+    /**
+     * seperate blocks of codes
+     * @method
+     * @param {array} type type of codes
+     * @param {array} code seperated codes by type
+     * @returns {array} sync : array of sync number of each codes
+     */
     makeSyncBlock(type, code) {
         let sync = [];
         let cnt = 0;
@@ -921,15 +954,13 @@ class eTemplate {
             let lastLetter = cleanPrevCode.substring(cleanPrevCode.length - endBlank - 1).trim();
 
             if (lastLetter != ">") {
-                // previous HTML is not ended with tag
+                // previous code is not ended with tag
                 endPos = prevCode.lastIndexOf(">");
                 startPos = prevCode.lastIndexOf("<");
 
                 // Check template in the middle of prev and next code, which means template is used in attributes
-                if (endPos < startPos) { // if in the middle
-                    // find the block end of tag
-                    let tag = prevCode.substring(startPos+1, prevCode.indexOf(" ", startPos));
 
+                if (endPos < startPos) { // if in the middle
                     for (let j = i + 1; j < syncLen; j++) {
                         if (type[j] === "HTML" && code[j].indexOf(`>`) > 0) {
                             // adjust sync to the same within the tag
@@ -943,7 +974,6 @@ class eTemplate {
                     // find the attributes
                     let classPos = -1;
                     let currentAttr = '';
-
                     for (let j= i; j <= endBlockIndex; j++) {
                         if (type[j] === "JS") {
                             for (let k=j-1; k>=0; k--) {
@@ -958,6 +988,7 @@ class eTemplate {
                         }
                     }
 
+                    // if class doesn't include template, find the position of class, again.
                     for (let j= i-1; j <= endBlockIndex+1; j++) {
                         if (type[j] === "HTML" && code[j].match(attrRegex)!==null && type[j + 1] == "JS") {
                             let classIndex = code[j].lastIndexOf('class');
@@ -1229,21 +1260,22 @@ class eTemplate {
         let relUrl = this.currentUrl().host;
         linkTags.forEach((linkTag) => {
             let linkHref = getHref(linkTag);
-            if (linkHref.indexOf("http")<0) urls.push(new URL(linkHref, relUrl).href);
+            if (linkHref.indexOf("http")<0 && linkHref.indexOf("base64,"<0)) urls.push(new URL(linkHref, relUrl).href);
         });
         urls = urls.map(url => this.removeControlText(url));
         // read and combine css files
         let importedStyles = await this.getTextFromFiles(urls);
+
         let relativeUrls = [];
         urls.forEach(url => {
             relativeUrls.push(this.getComparedPath(url, this.currentUrl().host));
         });
+
         for (let i=0; i<importedStyles.length; i++) {
             importedStyles[i] = this.replaceRelativeUrl(importedStyles[i], relativeUrls[i]);
         }
-        
-        combinedStyle = importedStyles.reduce((acc, style) => acc + style, combinedStyle);
 
+        combinedStyle = importedStyles.join('');
         combinedStyle = await this.insertNestedCSS(combinedStyle);
         return combinedStyle;
     }
@@ -1307,11 +1339,9 @@ class eTemplate {
         const urlRegex = /(@import *['"])(.*?)(['"])|(url\(['"]?)(.*?)(['"]?\))/g;
         function replacer (match, p1, p2, p3, p4, p5, p6) {
             if (p1 == undefined) {
-                if (p5.indexOf('http')>-1) return p4+p5+p6;
                 p5 = compareUrls(p5, relativeUrl);
                 return p4+p5+p6;
             } else {
-                if (p2.indexOf('http')>-1) return p1+p2+p3;
                 p2 = compareUrls(p2, relativeUrl); 
                 return p1+p2+p3;
             }
@@ -1321,14 +1351,18 @@ class eTemplate {
             if (oldUrl.substring(0,1)=="/") return baseUrl+oldUrl.substring(1);
             if (oldUrl.substring(0,2)=="./") return baseUrl+oldUrl.substring(2);
             if (oldUrl.substring(0,3)=="../") {
+                let prevSlashNo = [... oldUrl.matchAll(/\.\.\//g)].length;
                 let baseArr = baseUrl.split('/');
                 baseArr.pop();
-                baseArr.pop();
+                while (baseArr.length>=0 && prevSlashNo>0) {
+                    baseArr.pop();
+                    prevSlashNo--;
+                }                
                 baseUrl = "."+baseArr.join("/")+"/";
                 return baseUrl+oldUrl.substring(3);
             }
         }
-
+        if (style.includes('base64,') || style.includes('http')) return style;
         let newStyle = style.replace(urlRegex, replacer);
         return newStyle;
     } 
@@ -1352,13 +1386,18 @@ class eTemplate {
             if (oldUrl.substring(0,1)=="/") return baseUrl+oldUrl.substring(1);
             if (oldUrl.substring(0,2)=="./") return baseUrl+oldUrl.substring(2);
             if (oldUrl.substring(0,3)=="../") {
+                let prevSlashNo = [... oldUrl.matchAll(/\.\.\//g)].length;
                 let baseArr = baseUrl.split('/');
                 baseArr.pop();
-                baseArr.pop();
+                while (baseArr.length>=0 && prevSlashNo>0) {
+                    baseArr.pop();
+                    prevSlashNo--;
+                }
                 baseUrl = "."+baseArr.join("/")+"/";
                 return baseUrl+oldUrl.substring(3);
             }
         }
+
         let newHtml = html.replace(urlRegex, replacer);
         return newHtml;
     } 
