@@ -1,25 +1,30 @@
 class myWorker {
     constructor({
-        openDelimiter = "<%", closeDelimiter = "%>"
+        options
     } = {}) {
         this.titleCode = ""; // HTML for title 
-        this.openDelimiter = openDelimiter; // start tag of template
-        this.closeDelimiter = closeDelimiter; // end tag of template
-        this.commentDelimiter = openDelimiter + "%"; // start tag of comment template
+        this.openDelimiter = options.openDelimiter; // start tag of template
+        this.closeDelimiter = options.closeDelimiter; // end tag of template
+        this.commentDelimiter = options.openDelimiter + "%"; // start tag of comment template
         this.url = "";
         this.titleCode = "";
         this.metaArray = [];
+        this.options = {
+            titleChange : options.titleChange,
+            metaChange : options.metaChange,
+            cssChange : options.cssChange
+        }
     }
 
-    async readFurther(scope, currentUrl) {
+    async readFurther(currentUrl) {
         let cssText ="";
         const res = await fetch(currentUrl);
         let currentHTML = await res.text();
-        this.readMeta(currentHTML);
-        this.getTitle(currentHTML);
+        if (this.options.metaChange) this.readMeta(currentHTML);
+        if (this.options.titleChange) this.getTitle(currentHTML);
         this.url = currentUrl;
         // CSS change in HEAD
-        if (scope !== "body") { cssText = await this.changeCss(currentHTML); }
+        if (this.options.cssChange) cssText = await this.changeCss(currentHTML);
         // insert nested HTML files
         const result = await this.insertNestedHTML(currentHTML);
         let fileIncludedHTML = result.fileIncludedHTML;
@@ -453,10 +458,10 @@ class myWorker {
 onmessage = (e) => {
     let result = {};
     let url = e.data.path;
-    let scope = e.data.scope;
-    const mworker = new myWorker();
+    let options = e.data.options;
+    const mworker = new myWorker( { options: options });
 
-    const temp = mworker.readFurther(scope, url).then( res => {
+    const temp = mworker.readFurther(url).then( res => {
         result.fileIncludedHTML = res.fileIncludedHTML;
         result.cssText = res.cssText;
         result.fileName = res.filename;

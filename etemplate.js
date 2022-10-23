@@ -10,17 +10,34 @@
  * ! ver 2.10 : extend components usage as a simple variable or a function
  * ! ver 2.20 : bug fix on existing classes and add function of templates in meta tag
  * ! ver 2.30 : improve on multiple templates in attributes
-  * Render and sync state changes of variable to HTML and CSS using template literals 
+ * Render and sync state changes of variable to HTML and CSS using template literals 
  * @class
  * @param {string} openDelimiter start tag of template
  * @param {string} closeDelimiter end tag of template
  * @param {string} syncClass class name to update
  * @param {string} startUrl if syncUrl is not defined for render(), startUrl can be loaded.
+ * @param {object} urlList array of urls to use single page app
+ * @param {boolean} useHash whether to use hashes in url for single page app
  */
 class eTemplate {
-    constructor({
-        openDelimiter = "<%", closeDelimiter = "%>", syncClass = "et_sync", startUrl = "", urlList = []
-    } = {}) {
+    constructor( 
+        {
+            openDelimiter = "<%",
+            closeDelimiter = "%>",
+            syncClass = "et_sync",
+            startUrl = "",
+            urlList = [],
+            useHash = true,
+            titleChange = true,
+            metaChange = true,
+            cssChange = true
+        } = {}
+    ) {
+        this.startUrl = startUrl; // default url replacing index.html
+        this.syncClass = syncClass; // class name to update
+        this.openDelimiter = openDelimiter; // start tag of template
+        this.closeDelimiter = closeDelimiter; // end tag of template
+        this.commentDelimiter = openDelimiter + "%"; // start tag of comment template
         this.htmlCode = []; // categorized HTML codes
         this.htmlType = []; // categorized types of codes, "JS":template or "HTML"
         this.htmlSync = []; // numbers of code block
@@ -31,61 +48,68 @@ class eTemplate {
         this.templateInClass = []; // template in class
         this.titleCode = ""; // HTML for title 
         this.metaArray = []; // META info with templates
-        this.startUrl = startUrl; // default url replacing index.html
-        this.syncClass = syncClass; // class name to update
-        this.openDelimiter = openDelimiter; // start tag of template
-        this.closeDelimiter = closeDelimiter; // end tag of template
-        this.commentDelimiter = openDelimiter + "%"; // start tag of comment template
-        this.preRead = []; // stored and integrated codes from web workers 
         this.urlList = urlList; // urls to read in advance while the first page is being loaded
-        this.fileName = ""; // current filename to render
+        this.preRead = []; // stored and integrated codes from web workers         
         this.scripts = []; // temporarily stored scripts
-        this.currentHash = ""; 
+        // to store options throughout the class
+        this.options = { 
+            useHash : useHash,
+            titleChange : titleChange,
+            metaChange : metaChange,
+            cssChange : cssChange
+        }; 
     }
 
     /**
      * !Interpret CSS and HTML with templates and Render them
      * @param {string} fileName filename to render in <body>
-     * @param {object} scroll Object for scroll in rendered page
-     * @param {string} scroll.id Id to find for scroll
+     * @param {object} scroll object for scroll after rendering
+     * @param {string} scroll.id ID of elements to scroll to
      * @param {string} scroll.position position of elements with ID to scroll
-     * @param {string} scope scope for interpret. "": CSS and HTML, "body": only HTML
-     */
+          */
 
-    async render({ url: fileName = "", scroll = {}, scope = "" } = {}, callback = function() {} ) {
-         /**
-         * ! Priority of fileName
-         * 1. url in fileName
-         * 2. url in startUrl
-         * 3. this file's url
-         */
-        this.syncCnt = 0;
-        // if there is no object and only function
-        if (typeof arguments[0] === 'function') callback = arguments[0];        
-        fileName = fileName === "" ? (this.startUrl !== "" ? this.startUrl : this.currentUrl().filename) : fileName;
+    async render({ url: fileName = "", scroll = {} } = {}, callback = ()=>{} ) {
+        if (typeof arguments[0]==='function') callback = arguments[0];
+        const scope = this.options.cssChange ? "" : "body";
+        const hash = window.location.hash.substring(1);
+
+        if (this.options.useHash) {
+            fileName = fileName !== "" ? fileName : hash!==''? hash+'.html': this.startUrl !== "" ? this.startUrl : this.currentUrl().filename;
+        } else {
+            fileName = fileName !== "" ? fileName : this.startUrl !== "" ? this.startUrl : this.currentUrl().filename;
+        }
+        
         // adjust relative pathname to match host url
         fileName = this.verifyFilename(fileName);
+        // store urlList
         this.urlList = this.urlList.map(url => this.verifyFilename(url));
         // added workers
         let index = this.urlList.indexOf(fileName) || 0;
         let joinedHTML = '';
-        this.fileName = fileName;
+        this.syncCnt = 0;
 
         if (this.preRead.length == 0) {     
             // if it's the first time to render, preRead() unless ther is no urlList
-            if (this.urlList.length > 0) this.preReadFiles(this.urlList, scope);
+            let transferOptions = this.options;
+            transferOptions.openDelimiter = this.openDelimiter;
+            transferOptions.closeDelimiter = this.closeDelimiter;
+            if (this.urlList.length > 0) this.preReadFiles(this.urlList, transferOptions );
             let myUrl = this.currentUrl().host + fileName;        
             //  read first layer HTML
             const RESPONSE = await fetch(myUrl);
             const CURRENTHTML = await RESPONSE.text();
             // read META
-            this.readMeta(CURRENTHTML);
-            this.changeMeta();
+            if (this.options.metaChange) {
+                this.readMeta(CURRENTHTML);
+                this.changeMeta();
+            }
             // change title
-            this.getTitle(CURRENTHTML);        
-            this.changeTitle(this.titleCode);
+            if (this.options.titleChange) {
+                this.getTitle(CURRENTHTML);        
+                this.changeTitle(this.titleCode);
+            }
             // read multiple layers and proceed
-            const RESULT = await this.readFurther(CURRENTHTML, scope);
+            const RESULT = await this.readFurther(CURRENTHTML);
             // add scripts to interpreted htmlBlock
             joinedHTML = RESULT.htmlBlock.join('') + this.scripts.join('');
             // variables for sync()
@@ -98,11 +122,12 @@ class eTemplate {
             this.metaArray = this.preRead[index].metaArray;
             this.templateInClass = [];
             this.syncCnt = 0;
-            this.changeMeta();
+            // change meta
+            if (this.options.metaChange) this.changeMeta();
             // change title
-            this.changeTitle(this.titleCode);
+            if (this.options.titleChange) this.changeTitle(this.titleCode);
             // chanes CSS
-            if (scope !== "body") this.changeCssFromCombinedStyle(cssText);        
+            if (this.options.cssChange) this.changeCssFromCombinedStyle(cssText);
             // insert nested HTML modules
             let moduleIncludedHTML = this.insertModules(fileIncludedHTML);
             const RESULT = await this.readFurtherFromCombinedHTML(moduleIncludedHTML);
@@ -135,12 +160,12 @@ class eTemplate {
      * @param {string} scope scope to check templates
      * @returns nothing
      */
-    async preReadFiles(urlList, scope) {
+    async preReadFiles(urlList, options) {
         let workers = [];
         for(let i=0; i<urlList.length; i++) {
             const path = new URL(urlList[i], this.currentUrl().host).href;
             workers[i] = (new Worker(this.currentUrl().host + 'js/worker.min.js'));
-            workers[i].postMessage({path, scope});
+            workers[i].postMessage({path, options});
             workers[i].onmessage = (e) => {
                 this.preRead[i] = e.data;
                 workers[i].terminate();
@@ -177,13 +202,13 @@ class eTemplate {
      * @param {string} scope scope for interpret. "": CSS and HTML, "body": only HTML
      * @returns {object} htmlBlock: interpreted codes array / codeList: object of code and type
      */
-     async readFurther(currentHTML, scope) {
+    async readFurther(currentHTML) {
         // remove comments
         currentHTML = this.removeComment(currentHTML);
         // remove scripts in body
         currentHTML = this.storeScript(currentHTML);
         // CSS change in HEAD
-        if (scope !== "body") await this.changeCss(currentHTML); 
+        if (this.options.cssChange) await this.changeCss(currentHTML); 
         // insert nested HTML files
         let { fileIncludedHTML, codeList } = await this.insertNestedHTML(currentHTML);
         // insert nested HTML modules
@@ -245,15 +270,15 @@ class eTemplate {
      * @param {string} scope updating scope, whether it updates only HTML or also CSS.    
      * @returns nothing
      */
-    sync(scope) {
+    sync() {
         let temp = "";
         let eClass = this.syncClass;
         const classtext = '${eClass}_';
         const classRegex = new RegExp(classtext);
         // check and change meta info
-        this.changeMeta();
+        if (this.options.metaChange) this.changeMeta();
         // check and change title
-        this.changeTitle(this.titleCode);
+        if (this.options.titleChange) this.changeTitle(this.titleCode);
         // change related variables from input values
         const inputEls = document.querySelectorAll(`input.${eClass}`);
         for (let i = 0; i < inputEls.length; i++) {
@@ -312,7 +337,7 @@ class eTemplate {
                 }
             }
         }
-        if (scope != "body") this.syncCss();
+        if (this.options.cssChange) this.syncCss();
     }
 
     /**
@@ -1368,7 +1393,9 @@ class eTemplate {
     } 
 
     htmlReplaceRelativeUrl(html, relativeUrl) {
-        const urlRegex = /(\<[a-z]* *src *= *['"`])((?!http|\<\%).*)(['"`])|(href *= *['"`])((?!http|\<\%|#).*[^\>\%])(['"`])|(\<\%[^\%] *include *\(?["'`])(.*)(["'`])/g;
+        const urlRegexText = `(\\<[a-z]* *src *= *['"])((?!http|${this.openDelimiter}).*)(['"])|(href *= *['"])((?!http|${this.openDelimiter}|#).*[^\\>\\%])(['"])|(${this.openDelimiter}[^\\%] *include *\\(?["'])(.*)(["'])`;
+        const urlRegex = new RegExp(urlRegexText, "g");
+        // const urlRegex = /(\<[a-z]* *src *= *['"])((?!http|\<\%).*)(['"])|(href *= *['"])((?!http|\<\%|#).*[^\>\%])(['"])|(\<\%[^\%] *include *\(?["'])(.*)(["'])/g;
         function replacer (match, p1, p2, p3, p4, p5, p6, p7, p8, p9) {
             if (p1 !== undefined) {
                 p2 = compareUrls(p2, relativeUrl);
@@ -1805,12 +1832,4 @@ class eTemplate {
                         : "undefined";
         }
     }
-
 }
-// mouse is on inside or outside of document
-document.onmouseover = function () {
-    window.innerDocClick = true;
-};
-document.onmouseleave = function () {
-    window.innerDocClick = false;
-};
